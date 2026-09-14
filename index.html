@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Astreintes — Commune de Pasly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<style>
+  :root{
+    --navy:#1B2A41;
+    --stone:#EDE7D9;
+    --stone-dark:#DED5BF;
+    --tuile:#C1502E;
+    --foret:#3F5C48;
+    --ocre:#C98A3A;
+    --ink:#242019;
+    --white:#FFFFFF;
+    --radius:3px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--stone);
+    color:var(--ink);
+    font-family:'IBM Plex Sans', sans-serif;
+    line-height:1.5;
+  }
+  h1,h2,h3{
+    font-family:'Fraunces', serif;
+    font-weight:600;
+    margin:0 0 .4em 0;
+    color:var(--navy);
+  }
+  header.top{
+    background:var(--navy);
+    color:var(--stone);
+    padding:18px 20px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:8px;
+  }
+  header.top .brand{
+    font-family:'Fraunces', serif;
+    font-size:1.2rem;
+    font-weight:600;
+    letter-spacing:.2px;
+  }
+  header.top .brand span{
+    display:block;
+    font-family:'IBM Plex Sans', sans-serif;
+    font-size:.72rem;
+    font-weight:400;
+    opacity:.72;
+    letter-spacing:.4px;
+  }
+  header.top .who{
+    font-size:.85rem;
+    display:flex;
+    align-items:center;
+    gap:12px;
+  }
+  header.top button{
+    background:transparent;
+    border:1px solid rgba(237,231,217,.4);
+    color:var(--stone);
+    padding:6px 12px;
+    border-radius:var(--radius);
+    cursor:pointer;
+    font-size:.8rem;
+    font-family:inherit;
+  }
+  header.top button:hover{background:rgba(237,231,217,.12);}
+
+  main{
+    max-width:760px;
+    margin:0 auto;
+    padding:24px 18px 80px;
+  }
+
+  nav.tabs{
+    display:flex;
+    gap:2px;
+    margin-bottom:22px;
+    border-bottom:1px solid var(--stone-dark);
+  }
+  nav.tabs button{
+    background:none;
+    border:none;
+    padding:10px 4px;
+    margin-right:22px;
+    font-family:'IBM Plex Sans', sans-serif;
+    font-size:.92rem;
+    font-weight:500;
+    color:#8a8272;
+    cursor:pointer;
+    border-bottom:2px solid transparent;
+  }
+  nav.tabs button.active{
+    color:var(--navy);
+    border-bottom:2px solid var(--tuile);
+  }
+
+  .card{
+    background:var(--white);
+    border:1px solid var(--stone-dark);
+    border-radius:var(--radius);
+    padding:18px;
+    margin-bottom:14px;
+  }
+
+  .week-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:14px 0;
+    border-bottom:1px solid var(--stone-dark);
+    gap:12px;
+    flex-wrap:wrap;
+  }
+  .week-row:last-child{border-bottom:none;}
+  .week-label{font-weight:500;}
+  .week-sub{font-size:.78rem;color:#8a8272;margin-top:2px;}
+
+  .pill{
+    display:inline-block;
+    padding:3px 10px;
+    border-radius:12px;
+    font-size:.74rem;
+    font-weight:500;
+  }
+  .pill.oui{background:#E4EBE5;color:var(--foret);}
+  .pill.non{background:#F1E4E0;color:var(--tuile);}
+  .pill.partiel{background:#F3E9D8;color:var(--ocre);}
+  .pill.publiee{background:var(--navy);color:var(--stone);}
+
+  select, input[type=date], input[type=email], input[type=text]{
+    font-family:inherit;
+    font-size:.88rem;
+    padding:7px 9px;
+    border:1px solid var(--stone-dark);
+    border-radius:var(--radius);
+    background:var(--white);
+  }
+
+  button.primary{
+    background:var(--tuile);
+    color:var(--white);
+    border:none;
+    padding:9px 16px;
+    border-radius:var(--radius);
+    font-family:inherit;
+    font-size:.86rem;
+    font-weight:500;
+    cursor:pointer;
+  }
+  button.primary:hover{background:#A8431F;}
+  button.primary:disabled{background:#ccc;cursor:not-allowed;}
+
+  button.ghost{
+    background:none;
+    border:1px solid var(--stone-dark);
+    color:var(--ink);
+    padding:8px 14px;
+    border-radius:var(--radius);
+    font-family:inherit;
+    font-size:.84rem;
+    cursor:pointer;
+  }
+  button.ghost:hover{border-color:var(--navy);}
+
+  .days{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+  .day-chip{
+    padding:5px 10px;
+    border:1px solid var(--stone-dark);
+    border-radius:12px;
+    font-size:.76rem;
+    cursor:pointer;
+    user-select:none;
+  }
+  .day-chip.on{background:var(--foret);color:var(--white);border-color:var(--foret);}
+
+  .empty{
+    text-align:center;
+    color:#8a8272;
+    padding:30px 10px;
+    font-size:.9rem;
+  }
+
+  #login-screen{
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:var(--navy);
+    padding:20px;
+  }
+  #login-screen .box{
+    background:var(--stone);
+    padding:34px 30px;
+    border-radius:var(--radius);
+    max-width:360px;
+    width:100%;
+  }
+  #login-screen .box h1{font-size:1.4rem;}
+  #login-screen .box p{font-size:.86rem;color:#5a5346;}
+  #login-screen input{width:100%;margin:10px 0;}
+  #login-screen button{width:100%;margin-top:6px;}
+
+  .msg{font-size:.82rem;margin-top:10px;}
+  .msg.ok{color:var(--foret);}
+  .msg.err{color:var(--tuile);}
+
+  table.balance{width:100%;border-collapse:collapse;font-size:.86rem;}
+  table.balance th, table.balance td{
+    text-align:left;
+    padding:7px 4px;
+    border-bottom:1px solid var(--stone-dark);
+  }
+  table.balance th{color:#8a8272;font-weight:500;font-size:.76rem;}
+
+  .hidden{display:none !important;}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="box">
+    <h1>Astreintes<br>Commune de Pasly</h1>
+    <p>Connectez-vous avec l'adresse email associée à votre compte élu. Un lien de connexion vous sera envoyé.</p>
+    <input type="email" id="login-email" placeholder="votre.email@exemple.fr">
+    <button class="primary" id="login-btn">Recevoir le lien de connexion</button>
+    <div class="msg" id="login-msg"></div>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <header class="top">
+    <div class="brand">Astreintes<span>Commune de Pasly</span></div>
+    <div class="who">
+      <span id="who-name"></span>
+      <button id="logout-btn">Déconnexion</button>
+    </div>
+  </header>
+
+  <main>
+    <nav class="tabs" id="tabs"></nav>
+    <div id="view"></div>
+  </main>
+</div>
+
+<script>
+// =========================================================
+// CONFIGURATION — à remplir avec vos propres clés
+// =========================================================
+const SUPABASE_URL = "https://ayfwjgzdspjkmmurefge.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
+const EMAILJS_PUBLIC_KEY = "bvTa8FUhj5JomRvGS";
+const EMAILJS_SERVICE_ID = "service_sfgxgtq";
+const EMAILJS_TEMPLATE_ID = "template_4jh4miq";
+
+const JOURS = ["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"];
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+if (window.emailjs) emailjs.init(EMAILJS_PUBLIC_KEY);
+
+let state = {
+  session: null,
+  agent: null,      // ligne agents correspondant à l'utilisateur connecté
+  isAdmin: false,
+  tab: 'dispos'
+};
+
+// ---------- AUTH ----------
+document.getElementById('login-btn').addEventListener('click', async () => {
+  const email = document.getElementById('login-email').value.trim();
+  const msg = document.getElementById('login-msg');
+  if (!email) { msg.textContent = "Merci de saisir votre email."; msg.className = "msg err"; return; }
+  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.href } });
+  if (error) { msg.textContent = "Erreur : " + error.message; msg.className = "msg err"; }
+  else { msg.textContent = "Lien envoyé. Vérifiez votre boîte mail (et vos spams)."; msg.className = "msg ok"; }
+});
+
+document.getElementById('logout-btn').addEventListener('click', async () => {
+  await sb.auth.signOut();
+  window.location.reload();
+});
+
+async function initAuth(){
+  const { data: { session } } = await sb.auth.getSession();
+  state.session = session;
+  if (!session) { showLogin(); return; }
+
+  const { data: agent, error } = await sb.from('agents').select('*').eq('email', session.user.email).maybeSingle();
+  if (error || !agent) {
+    document.getElementById('login-msg').textContent = "Votre email n'est pas enregistré comme agent. Contactez l'administrateur.";
+    document.getElementById('login-msg').className = "msg err";
+    await sb.auth.signOut();
+    showLogin();
+    return;
+  }
+  state.agent = agent;
+  state.isAdmin = agent.role === 'admin';
+  showApp();
+}
+
+sb.auth.onAuthStateChange((event) => {
+  if (event === 'SIGNED_IN') initAuth();
+});
+
+function showLogin(){
+  document.getElementById('login-screen').classList.remove('hidden');
+  document.getElementById('app').classList.add('hidden');
+}
+
+function showApp(){
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('who-name').textContent = state.agent.nom + (state.isAdmin ? " · Admin" : "");
+  renderTabs();
+  renderView();
+}
+
+function renderTabs(){
+  const tabs = state.isAdmin
+    ? [['dispos','Mes disponibilités'],['admin-planning','Planning'],['admin-semaines','Semaines'],['admin-echanges','Échanges']]
+    : [['dispos','Mes disponibilités'],['planning','Planning'],['echanges','Échanges']];
+  const nav = document.getElementById('tabs');
+  nav.innerHTML = '';
+  tabs.forEach(([id,label]) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.className = state.tab === id ? 'active' : '';
+    b.addEventListener('click', () => { state.tab = id; renderTabs(); renderView(); });
+    nav.appendChild(b);
+  });
+}
+
+function renderView(){
+  const view = document.getElementById('view');
+  view.innerHTML = '<div class="empty">Chargement…</div>';
+  const routes = {
+    'dispos': renderDispos,
+    'planning': renderPlanningAgent,
+    'echanges': renderEchangesAgent,
+    'admin-planning': renderPlanningAdmin,
+    'admin-semaines': renderSemainesAdmin,
+    'admin-echanges': renderEchangesAdmin
+  };
+  (routes[state.tab] || renderDispos)(view);
+}
+
+// =========================================================
+// UTILITAIRES
+// =========================================================
+function formatDateFR(d){
+  const dt = new Date(d + 'T00:00:00');
+  return dt.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'});
+}
+function weekLabel(s){
+  return `Semaine du ${formatDateFR(s.date_debut)} au ${formatDateFR(s.date_fin)}`;
+}
+async function fetchAgents(){
+  const { data } = await sb.from('agents').select('*').eq('actif', true).order('nom');
+  return data || [];
+}
+function daysToggleHTML(selected){
+  return JOURS.map(j => `<span class="day-chip ${selected.includes(j) ? 'on' : ''}" data-jour="${j}">${j.slice(0,3)}</span>`).join('');
+}
+async function sendPublishEmail(agent, semaine){
+  if (!window.emailjs || EMAILJS_SERVICE_ID.startsWith('VOTRE_')) return;
+  try {
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+      to_email: agent.email,
+      to_name: agent.nom,
+      semaine: weekLabel(semaine),
+      date_debut: formatDateFR(semaine.date_debut),
+      date_fin: formatDateFR(semaine.date_fin)
+    });
+  } catch(e){ console.error('Email non envoyé', e); }
+}
+
+// =========================================================
+// VUE : MES DISPONIBILITÉS (agent)
+// =========================================================
+async function renderDispos(view){
+  const today = new Date().toISOString().slice(0,10);
+  const { data: semaines } = await sb.from('semaines').select('*').eq('statut','ouverte').gte('date_limite_dispo', today).order('date_debut');
+  const { data: mesDispos } = await sb.from('disponibilites').select('*').eq('agent_id', state.agent.id);
+  const dispoMap = {};
+  (mesDispos||[]).forEach(d => dispoMap[d.semaine_id] = d);
+
+  if (!semaines || semaines.length === 0){
+    view.innerHTML = '<div class="card"><div class="empty">Aucune semaine ouverte à la déclaration pour le moment.</div></div>';
+    return;
+  }
+
+  view.innerHTML = `<div class="card"><h3>Vos disponibilités</h3>` + semaines.map(s => {
+    const d = dispoMap[s.id] || { niveau:'non', jours:[], priorite:2 };
+    return `
+    <div class="week-row" data-semaine="${s.id}">
+      <div style="flex:1;min-width:220px;">
+        <div class="week-label">${weekLabel(s)}</div>
+        <div class="week-sub">Limite de réponse : ${formatDateFR(s.date_limite_dispo)}</div>
+        <div class="days-container ${d.niveau==='partiel' ? '' : 'hidden'}">
+          <div class="days" data-role="days">${daysToggleHTML(d.jours||[])}</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">
+        <select data-role="niveau">
+          <option value="non" ${d.niveau==='non'?'selected':''}>Indisponible</option>
+          <option value="oui" ${d.niveau==='oui'?'selected':''}>Disponible (toute la semaine)</option>
+          <option value="partiel" ${d.niveau==='partiel'?'selected':''}>Disponible certains jours</option>
+        </select>
+        <select data-role="priorite">
+          <option value="1" ${d.priorite==1?'selected':''}>Priorité haute (je préfère cette semaine)</option>
+          <option value="2" ${d.priorite==2?'selected':''}>Priorité normale</option>
+          <option value="3" ${d.priorite==3?'selected':''}>Priorité basse (en dernier recours)</option>
+        </select>
+        <button class="ghost" data-role="save">Enregistrer</button>
+      </div>
+    </div>`;
+  }).join('') + `</div>`;
+
+  view.querySelectorAll('.week-row').forEach(row => {
+    const semaineId = row.dataset.semaine;
+    const niveauSel = row.querySelector('[data-role=niveau]');
+    const daysWrap = row.querySelector('.days-container');
+    const daysBox = row.querySelector('[data-role=days]');
+
+    niveauSel.addEventListener('change', () => {
+      daysWrap.classList.toggle('hidden', niveauSel.value !== 'partiel');
+    });
+    daysBox.addEventListener('click', (e) => {
+      if (e.target.classList.contains('day-chip')) e.target.classList.toggle('on');
+    });
+    row.querySelector('[data-role=save]').addEventListener('click', async () => {
+      const jours = [...daysBox.querySelectorAll('.day-chip.on')].map(c => c.dataset.jour);
+      const payload = {
+        semaine_id: semaineId,
+        agent_id: state.agent.id,
+        niveau: niveauSel.value,
+        jours: niveauSel.value === 'partiel' ? jours : [],
+        priorite: parseInt(row.querySelector('[data-role=priorite]').value, 10)
+      };
+      const { error } = await sb.from('disponibilites').upsert(payload, { onConflict: 'semaine_id,agent_id' });
+      const btn = row.querySelector('[data-role=save]');
+      btn.textContent = error ? 'Erreur' : 'Enregistré ✓';
+      setTimeout(() => btn.textContent = 'Enregistrer', 1800);
+    });
+  });
+}
+
+// =========================================================
+// VUE : PLANNING (agent) — consultation + demande d'échange
+// =========================================================
+async function renderPlanningAgent(view){
+  const { data: semaines } = await sb.from('semaines').select('*').eq('statut','publiee').order('date_debut');
+  const { data: plannings } = await sb.from('planning').select('*');
+  const agents = await fetchAgents();
+  const agentById = Object.fromEntries(agents.map(a => [a.id, a]));
+  const planByWeek = Object.fromEntries((plannings||[]).map(p => [p.semaine_id, p]));
+
+  if (!semaines || semaines.length === 0){
+    view.innerHTML = '<div class="card"><div class="empty">Aucun planning publié pour le moment.</div></div>';
+    return;
+  }
+
+  view.innerHTML = `<div class="card"><h3>Planning publié</h3>` + semaines.map(s => {
+    const p = planByWeek[s.id];
+    const agent = p ? agentById[p.agent_id] : null;
+    const mine = agent && agent.id === state.agent.id;
+    return `
+    <div class="week-row">
+      <div>
+        <div class="week-label">${weekLabel(s)} ${mine ? '<span class="pill publiee">Vous</span>' : ''}</div>
+        <div class="week-sub">${agent ? agent.nom + ' · ' + (agent.telephone||'') : 'Non assigné'}</div>
+      </div>
+      ${mine ? `<button class="ghost" data-role="echange" data-semaine="${s.id}">Demander un échange</button>` : ''}
+    </div>`;
+  }).join('') + `</div>`;
+
+  view.querySelectorAll('[data-role=echange]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const autres = agents.filter(a => a.id !== state.agent.id);
+      const choix = prompt('Échanger avec qui ? Tapez le nom exact :\n' + autres.map(a=>a.nom).join('\n'));
+      const cible = autres.find(a => a.nom.toLowerCase() === (choix||'').toLowerCase().trim());
+      if (!cible) { alert('Agent non trouvé.'); return; }
+      const { error } = await sb.from('echanges').insert({
+        semaine_id: btn.dataset.semaine,
+        agent_demandeur_id: state.agent.id,
+        agent_cible_id: cible.id
+      });
+      alert(error ? 'Erreur : ' + error.message : 'Demande envoyée à ' + cible.nom + '.');
+      renderView();
+    });
+  });
+}
+
+// =========================================================
+// VUE : ÉCHANGES (agent) — répondre aux demandes qui le concernent
+// =========================================================
+async function renderEchangesAgent(view){
+  const { data: echanges } = await sb.from('echanges').select('*, semaines(*)').or(`agent_demandeur_id.eq.${state.agent.id},agent_cible_id.eq.${state.agent.id}`).order('created_at', { ascending:false });
+  const agents = await fetchAgents();
+  const agentById = Object.fromEntries(agents.map(a => [a.id, a]));
+
+  if (!echanges || echanges.length === 0){
+    view.innerHTML = '<div class="card"><div class="empty">Aucune demande d\'échange.</div></div>';
+    return;
+  }
+
+  view.innerHTML = `<div class="card"><h3>Demandes d'échange</h3>` + echanges.map(e => {
+    const demandeur = agentById[e.agent_demandeur_id];
+    const cible = agentById[e.agent_cible_id];
+    const statutPill = e.statut === 'attente' ? 'partiel' : (e.statut === 'acceptee' ? 'oui' : 'non');
+    const jeSuisCible = e.agent_cible_id === state.agent.id && e.statut === 'attente';
+    return `
+    <div class="week-row">
+      <div>
+        <div class="week-label">${weekLabel(e.semaines)}</div>
+        <div class="week-sub">${demandeur.nom} → ${cible.nom} <span class="pill ${statutPill}">${e.statut}</span></div>
+      </div>
+      ${jeSuisCible ? `
+        <div style="display:flex;gap:6px;">
+          <button class="ghost" data-role="accepter" data-id="${e.id}">Accepter</button>
+          <button class="ghost" data-role="refuser" data-id="${e.id}">Refuser</button>
+        </div>` : ''}
+    </div>`;
+  }).join('') + `</div>`;
+
+  view.querySelectorAll('[data-role=accepter],[data-role=refuser]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      const nouveauStatut = btn.dataset.role === 'accepter' ? 'acceptee' : 'refusee';
+      const { data: e } = await sb.from('echanges').select('*').eq('id', id).single();
+      await sb.from('echanges').update({ statut: nouveauStatut }).eq('id', id);
+      if (nouveauStatut === 'acceptee'){
+        // on échange l'assignation dans le planning
+        await sb.from('planning').update({ agent_id: e.agent_cible_id }).eq('semaine_id', e.semaine_id);
+      }
+      renderView();
+    });
+  });
+}
+
+// =========================================================
+// VUE ADMIN : PLANNING — générer, ajuster, publier
+// =========================================================
+async function renderPlanningAdmin(view){
+  const { data: semaines } = await sb.from('semaines').select('*').order('date_debut');
+  const { data: dispos } = await sb.from('disponibilites').select('*');
+  const { data: plannings } = await sb.from('planning').select('*');
+  const agents = await fetchAgents();
+  const agentById = Object.fromEntries(agents.map(a => [a.id, a]));
+  const planByWeek = Object.fromEntries((plannings||[]).map(p => [p.semaine_id, p]));
+  const dispoBySemaine = {};
+  (dispos||[]).forEach(d => { (dispoBySemaine[d.semaine_id] ||= []).push(d); });
+
+  if (!semaines || semaines.length === 0){
+    view.innerHTML = '<div class="card"><div class="empty">Aucune semaine créée. Allez dans l\'onglet « Semaines ».</div></div>';
+    return;
+  }
+
+  view.innerHTML = `
+    <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+      <div>
+        <h3 style="margin-bottom:2px;">Générer une proposition</h3>
+        <div class="week-sub">Répartit équitablement les semaines non encore assignées, selon les disponibilités déclarées.</div>
+      </div>
+      <button class="primary" id="btn-generer">Générer</button>
+    </div>
+    <div class="card">` + semaines.map(s => {
+      const p = planByWeek[s.id];
+      const candidats = (dispoBySemaine[s.id]||[]).filter(d => d.niveau !== 'non');
+      const options = candidats.map(d => {
+        const a = agentById[d.agent_id];
+        if (!a) return '';
+        return `<option value="${a.id}" ${p && p.agent_id===a.id ? 'selected':''}>${a.nom} ${d.niveau==='partiel' ? '(partiel: '+d.jours.join(', ')+')' : ''}</option>`;
+      }).join('');
+      return `
+      <div class="week-row">
+        <div>
+          <div class="week-label">${weekLabel(s)} <span class="pill ${s.statut==='publiee'?'publiee':'partiel'}">${s.statut}</span></div>
+          <div class="week-sub">${candidats.length} agent(s) dispo</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+          <select data-role="assign" data-semaine="${s.id}" ${s.statut==='publiee'?'disabled':''}>
+            <option value="">— choisir —</option>
+            ${options}
+          </select>
+          ${s.statut !== 'publiee' ? `<button class="ghost" data-role="publier" data-semaine="${s.id}">Publier</button>` : ''}
+        </div>
+      </div>`;
+    }).join('') + `</div>`;
+
+  document.getElementById('btn-generer').addEventListener('click', () => genererProposition(semaines, dispoBySemaine, plannings, agents));
+
+  view.querySelectorAll('[data-role=assign]').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      if (!sel.value) return;
+      await sb.from('planning').upsert({ semaine_id: sel.dataset.semaine, agent_id: sel.value }, { onConflict:'semaine_id' });
+    });
+  });
+  view.querySelectorAll('[data-role=publier]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const semaineId = btn.dataset.semaine;
+      const sel = view.querySelector(`[data-role=assign][data-semaine="${semaineId}"]`);
+      if (!sel.value) { alert('Choisissez un agent avant de publier.'); return; }
+      await sb.from('planning').upsert({ semaine_id: semaineId, agent_id: sel.value, notifie: true }, { onConflict:'semaine_id' });
+      await sb.from('semaines').update({ statut:'publiee' }).eq('id', semaineId);
+      const semaine = semaines.find(s => s.id === semaineId);
+      const agent = agentById[sel.value];
+      await sendPublishEmail(agent, semaine);
+      renderView();
+    });
+  });
+}
+
+// Algorithme d'équilibrage : pour chaque semaine sans planning,
+// choisit l'agent dispo avec le moins d'astreintes déjà comptabilisées,
+// en départageant par priorité déclarée (1 = plus favorable).
+async function genererProposition(semaines, dispoBySemaine, plannings, agents){
+  const counts = Object.fromEntries(agents.map(a => [a.id, 0]));
+  (plannings||[]).forEach(p => { if (counts[p.agent_id] !== undefined) counts[p.agent_id]++; });
+
+  const aTraiter = semaines.filter(s => s.statut !== 'publiee');
+  for (const s of aTraiter) {
+    const candidats = (dispoBySemaine[s.id]||[]).filter(d => d.niveau !== 'non');
+    if (candidats.length === 0) continue;
+    candidats.sort((a,b) => {
+      const diff = counts[a.agent_id] - counts[b.agent_id];
+      if (diff !== 0) return diff;
+      return a.priorite - b.priorite;
+    });
+    const choisi = candidats[0];
+    await sb.from('planning').upsert({ semaine_id: s.id, agent_id: choisi.agent_id }, { onConflict:'semaine_id' });
+    counts[choisi.agent_id]++;
+  }
+  renderView();
+}
+
+// =========================================================
+// VUE ADMIN : SEMAINES — création et suivi
+// =========================================================
+async function renderSemainesAdmin(view){
+  const { data: semaines } = await sb.from('semaines').select('*').order('date_debut', { ascending:false });
+
+  view.innerHTML = `
+    <div class="card">
+      <h3>Nouvelle semaine</h3>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+        <div>
+          <div class="week-sub">Lundi de la semaine</div>
+          <input type="date" id="new-debut">
+        </div>
+        <div>
+          <div class="week-sub">Date limite de réponse</div>
+          <input type="date" id="new-limite">
+        </div>
+        <button class="primary" id="btn-creer">Créer</button>
+      </div>
+    </div>
+    <div class="card"><h3>Équité — nombre d'astreintes par agent</h3><div id="balance"></div></div>
+    <div class="card"><h3>Semaines</h3>` + (semaines||[]).map(s => `
+      <div class="week-row">
+        <div>
+          <div class="week-label">${weekLabel(s)} <span class="pill ${s.statut==='publiee'?'publiee':'partiel'}">${s.statut}</span></div>
+          <div class="week-sub">Limite dispo : ${formatDateFR(s.date_limite_dispo)}</div>
+        </div>
+        <button class="ghost" data-role="suppr" data-id="${s.id}">Supprimer</button>
+      </div>`).join('') + `</div>`;
+
+  document.getElementById('btn-creer').addEventListener('click', async () => {
+    const debut = document.getElementById('new-debut').value;
+    const limite = document.getElementById('new-limite').value;
+    if (!debut || !limite) { alert('Renseignez les deux dates.'); return; }
+    const fin = new Date(debut + 'T00:00:00');
+    fin.setDate(fin.getDate() + 6);
+    const { error } = await sb.from('semaines').insert({
+      date_debut: debut,
+      date_fin: fin.toISOString().slice(0,10),
+      date_limite_dispo: limite
+    });
+    if (error) alert('Erreur : ' + error.message);
+    renderView();
+  });
+
+  view.querySelectorAll('[data-role=suppr]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Supprimer cette semaine et ses données associées ?')) return;
+      await sb.from('semaines').delete().eq('id', btn.dataset.id);
+      renderView();
+    });
+  });
+
+  // Tableau d'équité
+  const agents = await fetchAgents();
+  const { data: plannings } = await sb.from('planning').select('*');
+  const counts = Object.fromEntries(agents.map(a => [a.id, 0]));
+  (plannings||[]).forEach(p => { if (counts[p.agent_id] !== undefined) counts[p.agent_id]++; });
+  const rows = agents.slice().sort((a,b) => counts[a.id]-counts[b.id])
+    .map(a => `<tr><td>${a.nom}</td><td>${counts[a.id]}</td></tr>`).join('');
+  document.getElementById('balance').innerHTML = `<table class="balance"><tr><th>Agent</th><th>Astreintes</th></tr>${rows}</table>`;
+}
+
+// =========================================================
+// VUE ADMIN : ÉCHANGES — vue d'ensemble, arbitrage possible
+// =========================================================
+async function renderEchangesAdmin(view){
+  const { data: echanges } = await sb.from('echanges').select('*, semaines(*)').order('created_at', { ascending:false });
+  const agents = await fetchAgents();
+  const agentById = Object.fromEntries(agents.map(a => [a.id, a]));
+
+  if (!echanges || echanges.length === 0){
+    view.innerHTML = '<div class="card"><div class="empty">Aucune demande d\'échange.</div></div>';
+    return;
+  }
+
+  view.innerHTML = `<div class="card"><h3>Toutes les demandes d'échange</h3>` + echanges.map(e => {
+    const demandeur = agentById[e.agent_demandeur_id];
+    const cible = agentById[e.agent_cible_id];
+    const statutPill = e.statut === 'attente' ? 'partiel' : (e.statut === 'acceptee' ? 'oui' : 'non');
+    return `
+    <div class="week-row">
+      <div>
+        <div class="week-label">${weekLabel(e.semaines)}</div>
+        <div class="week-sub">${demandeur.nom} → ${cible.nom} <span class="pill ${statutPill}">${e.statut}</span></div>
+      </div>
+      <button class="ghost" data-role="suppr" data-id="${e.id}">Supprimer</button>
+    </div>`;
+  }).join('') + `</div>`;
+
+  view.querySelectorAll('[data-role=suppr]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await sb.from('echanges').delete().eq('id', btn.dataset.id);
+      renderView();
+    });
+  });
+}
+
+initAuth();
+</script>
+</body>
+</html>
