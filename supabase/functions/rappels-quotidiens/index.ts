@@ -1,8 +1,10 @@
 // Edge Function « rappels-quotidiens » — Planning Astreinte Pasly
 //
 // Appelée chaque matin par une tâche programmée (pg_cron). Envoie via Brevo :
-//   1. aux élus désignés, un rappel la veille (ou le jour même) d'un événement ;
-//   2. à l'agent désigné, un rappel 48 h avant le début de son astreinte ;
+//   1. aux élus désignés, un rappel la veille (ou le jour même) d'un événement,
+//      sauf à ceux qui ont répondu « absent » ;
+//   2. à l'agent désigné, un rappel 48 h avant le début de son astreinte,
+//      et au remplaçant d'un jour, la veille de son remplacement ;
 //   3. aux admins, une alerte quand une semaine débute dans 15 jours ou moins
 //      sans être publiée.
 // Chaque rappel n'est marqué « envoyé » que si l'envoi a réussi : en cas
@@ -108,11 +110,16 @@ Deno.serve(async (req) => {
   const { data: evenements } = await sb.from('evenements').select('*')
     .gte('date', today).lte('date', demain).eq('rappel_24h_envoye', false);
   if (evenements?.length) {
-    const { data: liens } = await sb.from('evenements_agents').select('evenement_id, agent_id')
-      .in('evenement_id', evenements.map(e => e.id));
+    const idsEv = evenements.map(e => e.id);
+    const [{ data: liens }, { data: absents }] = await Promise.all([
+      sb.from('evenements_agents').select('evenement_id, agent_id').in('evenement_id', idsEv),
+      sb.from('evenements_reponses').select('evenement_id, agent_id').in('evenement_id', idsEv).eq('reponse', 'absent')
+    ]);
+    // Ceux qui ont déjà répondu « absent » ne sont pas relancés.
+    const estAbsent = new Set((absents ?? []).map(r => r.evenement_id + '|' + r.agent_id));
     for (const ev of evenements) {
       const quand = ev.date === today ? "aujourd'hui" : 'demain';
-      const lot = (liens ?? []).filter(l => l.evenement_id === ev.id)
+      const lot = (liens ?? []).filter(l => l.evenement_id === ev.id && !estAbsent.has(ev.id + '|' + l.agent_id))
         .map(l => agentById[l.agent_id]).filter(a => a && a.actif && a.email)
         .map(a => ({
           type: 'evenement', email: a.email, nom: a.nom,
@@ -140,6 +147,21 @@ Deno.serve(async (req) => {
       }] : [];
       if (await traiter(lot) && !test) await sb.from('semaines').update({ rappel_48h_envoye: true }).eq('id', s.id);
     }
+  }
+
+  // 2 bis. Remplacements d'un jour acceptés, pour aujourd'hui ou demain → le remplaçant
+  const { data: remplacements } = await sb.from('remplacements_jour').select('*')
+    .eq('statut', 'acceptee').gte('date', today).lte('date', demain).eq('rappel_envoye', false);
+  for (const r of remplacements ?? []) {
+    const a = agentById[r.agent_remplacant_id];
+    const titulaire = agentById[r.agent_demandeur_id];
+    const quand = r.date === today ? "aujourd'hui" : 'demain';
+    const lot = (a && a.actif && a.email) ? [{
+      type: 'remplacement', email: a.email, nom: a.nom,
+      sujet: `Rappel — Vous êtes d'astreinte ${quand}`,
+      texte: `Vous remplacez ${titulaire ? titulaire.nom : "l'agent titulaire"} pour l'astreinte de ${quand}, ${dateLongue(r.date)}.`
+    }] : [];
+    if (await traiter(lot) && !test) await sb.from('remplacements_jour').update({ rappel_envoye: true }).eq('id', r.id);
   }
 
   // 3. Semaines non publiées dans 15 jours ou moins → alerte aux admins
