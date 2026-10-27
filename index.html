@@ -11,7 +11,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <style>
   :root{
     --navy:#1B2A41;
@@ -563,23 +562,17 @@
 // =========================================================
 const SUPABASE_URL = "https://ayfwjgzdspjkmmurefge.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
-const EMAILJS_PUBLIC_KEY = "bvTa8FUhj5JomRvGS";
-const EMAILJS_SERVICE_ID = "service_sfgxgtq";
-const EMAILJS_TEMPLATE_ID = "template_4jh4miq";
-// Facultatif : template EmailJS dédié à la relance des non-répondants
-// (texte différent : "merci de déclarer votre disponibilité..." plutôt
-// que "vous êtes désigné..."). Tant qu'il n'est pas configuré, le
-// bouton de relance l'indique clairement plutôt que d'échouer en silence.
-const EMAILJS_TEMPLATE_RAPPEL_ID = "template_pdqi22m";
+// Les emails ne partent plus du navigateur (fin d'EmailJS) : voir
+// envoyerEmailServeur() et les fonctions Supabase « envoyer-email » et
+// « rappels-quotidiens ».
 
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.10.27b";
+const APP_VERSION = "2026.10.27c";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-if (window.emailjs) emailjs.init(EMAILJS_PUBLIC_KEY);
 
 let state = {
   session: null,
@@ -1496,96 +1489,33 @@ async function ouvrirQuiEstDisponible(){
   charger();
 }
 
-async function sendPublishEmail(agent, semaine){
-  if (!window.emailjs || !EMAILJS_SERVICE_ID || EMAILJS_SERVICE_ID.startsWith('VOTRE_')) {
-    return { ok: false, reason: 'non_configure' };
-  }
+// =========================================================
+// EMAILS — envoyés par le serveur (fonction Supabase « envoyer-email »,
+// via Brevo). L'appli ne transmet qu'une action et un identifiant :
+// destinataires et textes sont déterminés côté serveur à partir de la
+// base, et le serveur vérifie les droits de la personne connectée.
+// Renvoie toujours { ok, envoyes, echecs, erreur } — jamais d'exception.
+// =========================================================
+async function envoyerEmailServeur(action, params){
   try {
-    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
-      to_email: agent.email,
-      to_name: agent.nom,
-      // Le template EmailJS "template_4jh4miq" (configuré sur emailjs.com,
-      // donc hors de ce fichier) contient le texte fixe :
-      // « ... pour la {{semaine}} (du {{date_debut}} au {{date_fin}}). »
-      // Envoyer semaine="semaine du X au Y" produisait donc une période
-      // en double dans l'email reçu. On envoie ici uniquement le mot
-      // "semaine", laissant la date réelle au (du ... au ...) du template.
-      semaine: 'semaine',
-      date_debut: formatDateEmail(semaine.date_debut),
-      date_fin: formatDateEmail(semaine.date_fin)
-    });
-    return { ok: true };
-  } catch(e){
-    console.error('Email non envoyé', e);
-    return { ok: false, reason: 'echec', detail: e };
+    const { data, error } = await sb.functions.invoke('envoyer-email', { body: { action, ...params } });
+    if (error) {
+      let message = error.message;
+      try { const corps = await error.context.json(); if (corps && corps.erreur) message = corps.erreur; } catch(e) {}
+      return { ok: false, envoyes: 0, echecs: 0, erreur: message };
+    }
+    return { ok: (data.echecs || 0) === 0, envoyes: data.envoyes || 0, echecs: data.echecs || 0, erreur: null };
+  } catch (e) {
+    return { ok: false, envoyes: 0, echecs: 0, erreur: (e && e.message) || 'Erreur réseau' };
   }
 }
 
-// Email de relance pour un agent n'ayant pas encore déclaré sa
-// disponibilité. Nécessite un second template EmailJS (voir SETUP) —
-// tant qu'il n'est pas configuré, on le signale clairement plutôt
-// que de tenter un envoi voué à l'échec ou d'envoyer le mauvais texte.
-// Un seul template EmailJS ("rappel") sert désormais pour deux usages
-// distincts — plan gratuit EmailJS oblige, limité en nombre de
-// templates. Le template lui-même ne contient plus que {{to_name}},
-// {{sujet}} et {{corps}} : c'est le code ci-dessous qui rédige le
-// texte propre à chaque cas, pas EmailJS.
-async function sendReminderEmail(agent, semaine){
-  if (!window.emailjs || !EMAILJS_TEMPLATE_RAPPEL_ID || EMAILJS_TEMPLATE_RAPPEL_ID.startsWith('VOTRE_')) {
-    return { ok: false, reason: 'non_configure' };
-  }
-  try {
-    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_RAPPEL_ID, {
-      to_email: agent.email,
-      to_name: agent.nom,
-      sujet: 'Rappel — Déclarez votre disponibilité',
-      corps: `Merci de déclarer votre disponibilité pour la semaine du ${formatDateEmail(semaine.date_debut)} au ${formatDateEmail(semaine.date_fin)}, avant le ${formatDateEmail(semaine.date_limite_dispo)}.`
-    });
-    return { ok: true };
-  } catch(e){
-    console.error('Rappel non envoyé', e);
-    return { ok: false, reason: 'echec', detail: e };
-  }
-}
-
-// Prévient un élu désigné qu'un nouvel événement (mariage, baptême...)
-// vient d'être créé. Réutilise le même template EmailJS générique
-// (sujet/corps) que les fonctions ci-dessus.
-async function sendEvenementEmail(agent, ev){
-  if (!window.emailjs || !EMAILJS_TEMPLATE_RAPPEL_ID || EMAILJS_TEMPLATE_RAPPEL_ID.startsWith('VOTRE_')) {
-    return { ok: false, reason: 'non_configure' };
-  }
-  try {
-    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_RAPPEL_ID, {
-      to_email: agent.email,
-      to_name: agent.nom,
-      sujet: `Vous êtes désigné(e) — ${ev.intitule}`,
-      corps: `Vous êtes désigné(e) comme participant pour : ${ev.intitule}, le ${formatDateEmail(ev.date)}${ev.heure ? ' à ' + ev.heure : ''}${ev.lieu ? ' (' + ev.lieu + ')' : ''}.`
-    });
-    return { ok: true };
-  } catch(e){
-    console.error('Email événement non envoyé', e);
-    return { ok: false, reason: 'echec', detail: e };
-  }
-}
-
-// Envoie un rappel à tous les agents n'ayant pas encore déclaré leur
-// disponibilité pour une semaine donnée. Réutilisé pour la relance
-// d'une seule semaine comme pour la relance groupée de toutes les
-// semaines ouvertes.
+// Relance les agents éligibles n'ayant pas encore déclaré leur
+// disponibilité pour une semaine (sélection faite par le serveur).
 async function relancerNonRepondants(semaine){
-  const agents = (await fetchAgentsAdmin()).filter(a => a.role !== 'lecteur' && a.eligible_astreinte !== false); // seuls les éligibles ont vocation à répondre
-  const { data: dejaRepondu, error: errDispo } = await sb.from('disponibilites').select('agent_id').eq('semaine_id', semaine.id);
-  if (errDispo) return { semaine, erreur: errDispo.message };
-  const dejaReponduSet = new Set((dejaRepondu||[]).map(d => d.agent_id));
-  const nonRepondants = agents.filter(a => !dejaReponduSet.has(a.id));
-  if (nonRepondants.length === 0) return { semaine, envoyes: 0, echecs: 0 };
-  let envoyes = 0, echecs = 0;
-  for (const agent of nonRepondants) {
-    const result = await sendReminderEmail(agent, semaine);
-    if (result.ok) envoyes++; else echecs++;
-  }
-  return { semaine, envoyes, echecs };
+  const r = await envoyerEmailServeur('relance', { semaine_id: semaine.id });
+  if (r.erreur) return { semaine, erreur: r.erreur };
+  return { semaine, envoyes: r.envoyes, echecs: r.echecs };
 }
 
 // Agrège les résultats (une ou plusieurs semaines) en un seul message clair.
@@ -1597,7 +1527,7 @@ function afficherResultatRelance(resultats){
   if (totalEnvoyes === 0 && totalEchecs === 0) {
     showToast('Tous les agents ont déjà répondu' + (resultats.length > 1 ? ' pour toutes les semaines ouvertes.' : '.'), 'success');
   } else if (totalEnvoyes === 0 && totalEchecs > 0) {
-    showToast('Aucun email envoyé — le template de relance EmailJS n\'est probablement pas configuré (voir SETUP).', 'error');
+    showToast('Aucun email n\'a pu être envoyé (' + totalEchecs + ' échec(s)). Réessayez plus tard.', 'error');
   } else {
     const suffixe = resultats.length > 1 ? ` (${resultats.length} semaine(s))` : '';
     showToast(totalEnvoyes + ' rappel(s) envoyé(s)' + (totalEchecs ? ', ' + totalEchecs + ' échec(s)' : '') + suffixe + '.', totalEchecs ? 'error' : 'success');
@@ -2572,13 +2502,11 @@ async function renderPlanningAdmin(view){
         const { data, error } = await sb.rpc('publier_planning', { p_semaine_id: semaineId, p_agent_id: sel.value });
         if (error) { showToast('Échec de la publication : ' + error.message, 'error'); return; }
 
-        const agentPourEmail = { nom: data.agent_nom, email: data.agent_email };
-        const semainePourEmail = { date_debut: data.semaine_debut, date_fin: data.semaine_fin };
-        const emailResult = await sendPublishEmail(agentPourEmail, semainePourEmail);
-        if (emailResult.ok) {
+        const emailResult = await envoyerEmailServeur('publication', { semaine_id: semaineId });
+        if (emailResult.ok && emailResult.envoyes > 0) {
           showToast('Planning publié. Email envoyé à ' + data.agent_nom + '.', 'success');
         } else {
-          showToast('Planning publié. Attention : l\'email n\'a pas pu être envoyé.', 'error');
+          showToast('Planning publié. Attention : l\'email n\'a pas pu être envoyé' + (emailResult.erreur ? ' (' + emailResult.erreur + ')' : '') + '.', 'error');
         }
         renderView();
       });
@@ -2589,13 +2517,13 @@ async function renderPlanningAdmin(view){
     btn.addEventListener('click', async (e) => {
       const semaineId = btn.dataset.semaine;
       const p = planByWeek[semaineId];
-      const semaine = semainesToutes.find(s => s.id === semaineId);
       if (!p) { showToast('Aucun agent assigné à cette semaine.', 'error'); return; }
       const agent = agentById[p.agent_id];
       if (!agent) { showToast('Agent introuvable.', 'error'); return; }
       await withLoading(e.currentTarget, 'Envoi…', async () => {
-        const result = await sendPublishEmail(agent, semaine);
-        showToast(result.ok ? 'Rappel envoyé à ' + agent.nom + '.' : 'Échec de l\'envoi du rappel.', result.ok ? 'success' : 'error');
+        const result = await envoyerEmailServeur('publication', { semaine_id: semaineId });
+        const ok = result.ok && result.envoyes > 0;
+        showToast(ok ? 'Rappel envoyé à ' + agent.nom + '.' : 'Échec de l\'envoi du rappel' + (result.erreur ? ' (' + result.erreur + ')' : '') + '.', ok ? 'success' : 'error');
       });
     });
   });
@@ -3110,9 +3038,9 @@ async function renderEvenementsGestion(view){
 
       // Prévient par email chaque participant désigné (best-effort : un
       // échec d'envoi n'annule pas la création, déjà actée en base).
-      const agentsPourEmail = participantsIds.map(id => agentById[id]).filter(a => a && a.email);
-      const resultatsEmail = await Promise.all(agentsPourEmail.map(a => sendEvenementEmail(a, inserted)));
-      const envoyes = resultatsEmail.filter(r => r.ok).length;
+      const envoyes = participantsIds.length
+        ? (await envoyerEmailServeur('evenement', { evenement_id: inserted.id })).envoyes
+        : 0;
 
       showToast('Événement ajouté.' + (envoyes ? ' ' + envoyes + ' email(s) envoyé(s).' : ''), 'success');
       renderView();
