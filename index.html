@@ -575,7 +575,7 @@ const EMAILJS_TEMPLATE_RAPPEL_ID = "template_pdqi22m";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.10.27";
+const APP_VERSION = "2026.10.27b";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1548,74 +1548,6 @@ async function sendReminderEmail(agent, semaine){
   }
 }
 
-// Rappelle à l'agent désigné que son astreinte commence dans moins de 48h.
-async function sendRappelAstreinteEmail(agent, semaine){
-  if (!window.emailjs || !EMAILJS_TEMPLATE_RAPPEL_ID || EMAILJS_TEMPLATE_RAPPEL_ID.startsWith('VOTRE_')) {
-    return { ok: false, reason: 'non_configure' };
-  }
-  try {
-    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_RAPPEL_ID, {
-      to_email: agent.email,
-      to_name: agent.nom,
-      sujet: 'Rappel — Votre astreinte débute bientôt',
-      corps: `Rappel : votre astreinte débute dans moins de 48h, le ${formatDateEmail(semaine.date_debut)} (jusqu'au ${formatDateEmail(semaine.date_fin)}).`
-    });
-    return { ok: true };
-  } catch(e){
-    console.error('Rappel astreinte non envoyé', e);
-    return { ok: false, reason: 'echec', detail: e };
-  }
-}
-
-// Vérifie, à chaque ouverture du tableau de bord, les semaines publiées
-// dont l'astreinte débute dans moins de 48h, et rappelle l'agent désigné
-// — une seule fois par semaine, grâce au drapeau rappel_48h_envoye
-// (colonne à ajouter en base). Tâche de fond, ne bloque jamais
-// l'affichage du tableau de bord.
-async function verifierRappelsAstreinte(){
-  const today = toISODate(new Date());
-  const dansDeuxJours = new Date(); dansDeuxJours.setDate(dansDeuxJours.getDate() + 2);
-  const seuil = toISODate(dansDeuxJours);
-  const { data: semaines, error } = await sb.from('semaines').select('*')
-    .eq('statut', 'publiee').gte('date_debut', today).lte('date_debut', seuil);
-  if (error || !semaines) return;
-  const aRappeler = semaines.filter(s => !s.rappel_48h_envoye);
-  if (aRappeler.length === 0) return;
-
-  const { data: plannings } = await sb.from('planning').select('*').in('semaine_id', aRappeler.map(s => s.id));
-  if (!plannings || plannings.length === 0) return;
-  const { data: agentsTous } = await sb.from('agents').select('*');
-  const agentById = Object.fromEntries((agentsTous||[]).map(a => [a.id, a]));
-
-  for (const s of aRappeler) {
-    const p = plannings.find(p => p.semaine_id === s.id);
-    const a = p && agentById[p.agent_id];
-    if (a && a.email) await sendRappelAstreinteEmail(a, s);
-    await sb.from('semaines').update({ rappel_48h_envoye: true }).eq('id', s.id);
-  }
-}
-
-// Alerte l'ADMIN (pas les agents) qu'une semaine approche sans être
-// publiée. Réutilise le même template EmailJS que sendReminderEmail
-// (voir le commentaire ci-dessus), avec un texte différent.
-async function sendAlerteNonPriseEmail(admin, semaine){
-  if (!window.emailjs || !EMAILJS_TEMPLATE_RAPPEL_ID || EMAILJS_TEMPLATE_RAPPEL_ID.startsWith('VOTRE_')) {
-    return { ok: false, reason: 'non_configure' };
-  }
-  try {
-    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_RAPPEL_ID, {
-      to_email: admin.email,
-      to_name: admin.nom,
-      sujet: 'Planning à vérifier',
-      corps: `La semaine du ${formatDateEmail(semaine.date_debut)} au ${formatDateEmail(semaine.date_fin)} n'est toujours pas publiée alors qu'elle approche. Pensez à vérifier le planning.`
-    });
-    return { ok: true };
-  } catch(e){
-    console.error('Alerte non envoyée', e);
-    return { ok: false, reason: 'echec', detail: e };
-  }
-}
-
 // Prévient un élu désigné qu'un nouvel événement (mariage, baptême...)
 // vient d'être créé. Réutilise le même template EmailJS générique
 // (sujet/corps) que les fonctions ci-dessus.
@@ -1634,76 +1566,6 @@ async function sendEvenementEmail(agent, ev){
   } catch(e){
     console.error('Email événement non envoyé', e);
     return { ok: false, reason: 'echec', detail: e };
-  }
-}
-
-// Rappelle à un participant désigné qu'un événement a lieu dans moins de 24h.
-async function sendRappelEvenementEmail(agent, ev){
-  if (!window.emailjs || !EMAILJS_TEMPLATE_RAPPEL_ID || EMAILJS_TEMPLATE_RAPPEL_ID.startsWith('VOTRE_')) {
-    return { ok: false, reason: 'non_configure' };
-  }
-  try {
-    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_RAPPEL_ID, {
-      to_email: agent.email,
-      to_name: agent.nom,
-      sujet: `Rappel — ${ev.intitule} demain`,
-      corps: `Rappel : vous êtes désigné(e) pour ${ev.intitule}, demain le ${formatDateEmail(ev.date)}${ev.heure ? ' à ' + ev.heure : ''}${ev.lieu ? ' (' + ev.lieu + ')' : ''}.`
-    });
-    return { ok: true };
-  } catch(e){
-    console.error('Rappel événement non envoyé', e);
-    return { ok: false, reason: 'echec', detail: e };
-  }
-}
-
-// Vérifie, à chaque ouverture du tableau de bord, les événements ayant
-// lieu dans moins de 24h et rappelle les élus désignés — une seule fois
-// par événement, grâce au drapeau rappel_24h_envoye (colonne à ajouter
-// en base : voir instructions fournies séparément). Tâche de fond, sans
-// await côté appelant, ne bloque jamais l'affichage du tableau de bord.
-async function verifierRappelsEvenements(){
-  const today = toISODate(new Date());
-  const demain = new Date(); demain.setDate(demain.getDate() + 1);
-  const seuil = toISODate(demain);
-  const { data: evenements, error } = await sb.from('evenements').select('*').gte('date', today).lte('date', seuil);
-  if (error || !evenements) return;
-  const aRappeler = evenements.filter(ev => !ev.rappel_24h_envoye);
-  if (aRappeler.length === 0) return;
-
-  const { data: liens } = await sb.from('evenements_agents').select('*').in('evenement_id', aRappeler.map(ev => ev.id));
-  if (!liens || liens.length === 0) return;
-  const { data: agentsTous } = await sb.from('agents').select('*');
-  const agentById = Object.fromEntries((agentsTous||[]).map(a => [a.id, a]));
-
-  for (const ev of aRappeler) {
-    const agentsIds = liens.filter(l => l.evenement_id === ev.id).map(l => l.agent_id);
-    for (const id of agentsIds) {
-      const a = agentById[id];
-      if (a && a.email) await sendRappelEvenementEmail(a, ev);
-    }
-    await sb.from('evenements').update({ rappel_24h_envoye: true }).eq('id', ev.id);
-  }
-}
-
-// Vérifie, à chaque ouverture du tableau de bord, si une semaine à
-// venir approche (15 jours) sans être publiée — et alerte les admins
-// par email une seule fois par semaine concernée (grâce au drapeau
-// rappel_non_prise_envoye). Ne bloque jamais l'affichage du tableau
-// de bord : lancée en tâche de fond, sans await du côté appelant.
-async function verifierAlertesNonPrises(semainesFutures){
-  const dansQuinzeJours = new Date(); dansQuinzeJours.setDate(dansQuinzeJours.getDate() + 15);
-  const seuil = toISODate(dansQuinzeJours);
-  const aAlerter = semainesFutures.filter(s => s.statut !== 'publiee' && s.date_debut <= seuil && !s.rappel_non_prise_envoye);
-  if (aAlerter.length === 0) return;
-
-  const { data: admins } = await sb.from('agents').select('*').eq('role','admin').eq('actif', true);
-  if (!admins || admins.length === 0) return;
-
-  for (const s of aAlerter) {
-    for (const admin of admins) {
-      await sendAlerteNonPriseEmail(admin, s);
-    }
-    await sb.from('semaines').update({ rappel_non_prise_envoye: true }).eq('id', s.id);
   }
 }
 
@@ -3566,13 +3428,10 @@ async function renderDashboardAdmin(view){
   document.getElementById('dash-refresh').addEventListener('click', () => renderView());
   document.getElementById('dash-qed').addEventListener('click', () => ouvrirQuiEstDisponible());
 
-  // Vérification des semaines à 15 jours non publiées, en tâche de fond
-  // (n'attend pas la réponse, ne bloque jamais l'affichage du tableau de bord).
-  verifierAlertesNonPrises(semainesFutures);
-  // Idem pour les événements ayant lieu dans moins de 24h.
-  verifierRappelsEvenements();
-  // Idem pour les astreintes publiées débutant dans moins de 48h.
-  verifierRappelsAstreinte();
+  // Les rappels automatiques (événements la veille, astreinte à 48 h,
+  // semaines non publiées à 15 jours) ne partent plus d'ici : ils sont
+  // envoyés chaque matin par le serveur (fonction Supabase
+  // « rappels-quotidiens », via Brevo), même si personne n'ouvre l'appli.
 
   view.querySelectorAll('[data-dash-semaine]').forEach(btn => {
     btn.addEventListener('click', () => {
