@@ -569,7 +569,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.10.27c";
+const APP_VERSION = "2026.10.27d";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1628,7 +1628,7 @@ document.addEventListener('visibilitychange', () => {
 document.getElementById('set-password-btn').addEventListener('click', () => {
   openModal(`
     <h3>Définir un mot de passe</h3>
-    <p class="week-sub" style="margin-bottom:10px;">8 caractères minimum, avec au moins une majuscule et un chiffre.</p>
+    <p class="week-sub" style="margin-bottom:10px;">8 caractères minimum, avec au moins une minuscule, une majuscule et un chiffre.</p>
     <div class="pw-wrap">
       <input type="password" id="modal-pw1" placeholder="Nouveau mot de passe" autocomplete="new-password">
       <button type="button" class="pw-toggle" data-target="modal-pw1">Afficher</button>
@@ -1649,10 +1649,11 @@ document.getElementById('set-password-btn').addEventListener('click', () => {
     const pw2 = document.getElementById('modal-pw2').value;
     const mmsg = document.getElementById('modal-msg');
     const assezLong = pw1.length >= 8;
+    const aMinuscule = /[a-z]/.test(pw1);
     const aMajuscule = /[A-Z]/.test(pw1);
     const aChiffre = /[0-9]/.test(pw1);
-    if (!assezLong || !aMajuscule || !aChiffre) {
-      mmsg.textContent = 'Le mot de passe doit faire au moins 8 caractères, avec une majuscule et un chiffre.';
+    if (!assezLong || !aMinuscule || !aMajuscule || !aChiffre) {
+      mmsg.textContent = 'Le mot de passe doit faire au moins 8 caractères, avec une minuscule, une majuscule et un chiffre.';
       mmsg.className = 'msg err';
       return;
     }
