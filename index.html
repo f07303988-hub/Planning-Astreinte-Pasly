@@ -575,7 +575,7 @@ const EMAILJS_TEMPLATE_RAPPEL_ID = "template_pdqi22m";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.09.18j";
+const APP_VERSION = "2026.10.27";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -714,6 +714,12 @@ function toISODate(date){
 // Génère un CSV (séparateur point-virgule, plus fiable qu'une virgule
 // pour l'Excel francophone) et déclenche son téléchargement. Le BOM UTF-8
 // en tête évite qu'Excel n'affiche les accents comme du charabia.
+// Date complète JJ/MM/AAAA pour les exports : sans l'année, Excel
+// interprète « 14/09 » comme une date de l'année en cours.
+function formatDateCSV(iso){
+  const [y, m, d] = String(iso).split('-');
+  return (y && m && d) ? `${d}/${m}/${y}` : String(iso || '');
+}
 function telechargerCSV(nomFichier, lignes){
   const echapper = (v) => {
     const s = String(v ?? '');
@@ -1177,10 +1183,12 @@ async function fetchRemplacantsParDate(agentsAvecInactifs){
 // élus désignés déjà résolu — jamais de nom de particulier ici, juste
 // l'intitulé libre saisi par la secrétaire ou l'admin.
 async function fetchEvenementsParDate(agentsAvecInactifs){
-  const { data: evenements, error } = await sb.from('evenements').select('*').order('date');
+  const [{ data: evenements, error }, { data: liens }, { data: reponses }] = await Promise.all([
+    sb.from('evenements').select('*').order('date'),
+    sb.from('evenements_agents').select('*'),
+    sb.from('evenements_reponses').select('*')
+  ]);
   if (error || !evenements || evenements.length === 0) return {};
-  const { data: liens } = await sb.from('evenements_agents').select('*');
-  const { data: reponses } = await sb.from('evenements_reponses').select('*');
   const agentByIdLocal = Object.fromEntries((agentsAvecInactifs||[]).map(a => [a.id, a]));
   const map = {};
   evenements.forEach(ev => {
@@ -1430,14 +1438,19 @@ async function ouvrirQuiEstDisponible(){
     const [{ data: agentsTous, error: errA }, { data: dispos, error: errD }, { data: plannings, error: errP }] = await Promise.all([
       sb.from('agents').select('*').eq('actif', true),
       sb.from('disponibilites').select('*').eq('semaine_id', semaineId),
-      sb.from('planning').select('agent_id')
+      sb.from('planning').select('agent_id, semaines(statut, date_fin)')
     ]);
     if (errA || errD || errP) { zone.innerHTML = '<div class="empty">Erreur de chargement.</div>'; return; }
 
     const eligiblesLocaux = (agentsTous||[]).filter(a => a.role !== 'lecteur' && a.eligible_astreinte !== false);
     const dispoParAgent = Object.fromEntries((dispos||[]).map(d => [d.agent_id, d]));
     const comptesAstreintes = {};
-    (plannings||[]).forEach(p => { comptesAstreintes[p.agent_id] = (comptesAstreintes[p.agent_id]||0) + 1; });
+    // « Déjà effectuées » = semaines publiées et terminées uniquement : ni les
+    // astreintes à venir, ni les simples propositions non publiées.
+    (plannings||[]).forEach(p => {
+      if (!p.semaines || p.semaines.statut !== 'publiee' || p.semaines.date_fin >= today) return;
+      comptesAstreintes[p.agent_id] = (comptesAstreintes[p.agent_id]||0) + 1;
+    });
 
     const lignes = eligiblesLocaux.map(a => {
       const d = dispoParAgent[a.id];
@@ -1959,7 +1972,25 @@ function renderTabs(){
   });
 }
 
+// Les affichages sont exécutés l'un après l'autre, jamais en même temps :
+// sinon, en changeant d'onglet pendant un chargement, l'onglet précédent
+// (s'il finit en dernier) écrasait l'écran demandé. Si plusieurs demandes
+// s'accumulent, seule la plus récente est exécutée.
+let fileAffichage = Promise.resolve();
+let derniereDemandeAffichage = 0;
 function renderView(){
+  const demande = ++derniereDemandeAffichage;
+  // Garde-fou : on n'attend jamais plus de 8 s l'affichage précédent
+  // (réseau mobile bloqué…), pour que l'appli ne reste pas figée.
+  const attenteMax = new Promise(r => setTimeout(r, 8000));
+  fileAffichage = Promise.race([fileAffichage, attenteMax]).then(() => {
+    if (demande !== derniereDemandeAffichage) return; // dépassée par une demande plus récente
+    return executerAffichage();
+  });
+  rafraichirBadgeNotifications();
+}
+
+function executerAffichage(){
   const view = document.getElementById('view');
   view.innerHTML = '<div class="empty">Chargement…</div>';
   // Garde-fou : un compte lecture seule ne doit jamais afficher autre chose que
@@ -1984,11 +2015,10 @@ function renderView(){
     'admin-agents': renderAgentsAdmin,
     'dashboard': renderDashboardAdmin
   };
-  (routes[state.tab] || renderDispos)(view).catch(err => {
+  return (routes[state.tab] || renderDispos)(view).catch(err => {
     console.error(err);
     view.innerHTML = '<div class="card"><div class="empty">Erreur de chargement. Rechargez la page.</div></div>';
   });
-  rafraichirBadgeNotifications();
 }
 
 // =========================================================
@@ -1999,12 +2029,22 @@ function renderView(){
 async function renderDispos(view){
   const exempte = state.agent.eligible_astreinte === false;
   const today = toISODate(new Date());
-  const { data: periodes } = await sb.from('indisponibilites_periodes').select('*').eq('agent_id', state.agent.id).order('date_debut');
-
-  // Résumé « Astreinte cette semaine », visible dès l'ouverture de l'appli.
-  const { data: semainesPubliees } = await sb.from('semaines').select('*').eq('statut','publiee');
-  const { data: planningsActuels } = await sb.from('planning').select('*');
-  const agentsPourResume = await fetchAgents();
+  // Chargements indépendants lancés en parallèle (plutôt que l'un après
+  // l'autre) pour un affichage plus rapide, surtout sur mobile.
+  const [
+    { data: periodes },
+    { data: semainesPubliees },
+    { data: planningsActuels },
+    agentsPourResume,
+    evenementsAConfirmer
+  ] = await Promise.all([
+    sb.from('indisponibilites_periodes').select('*').eq('agent_id', state.agent.id).order('date_debut'),
+    // Résumé « Astreinte cette semaine », visible dès l'ouverture de l'appli.
+    sb.from('semaines').select('*').eq('statut','publiee'),
+    sb.from('planning').select('*'),
+    fetchAgents(),
+    fetchMesEvenementsAConfirmer(state.agent.id)
+  ]);
   const remplacantsParDate = await fetchRemplacantsParDate(agentsPourResume);
   const resumeHTML = astreinteActuelleHTML(
     semainesPubliees,
@@ -2017,8 +2057,7 @@ async function renderDispos(view){
   // Événements où l'agent est participant, publiés pour réponse — une
   // carte « à confirmer » distincte des disponibilités d'astreinte, qui
   // répondent à une logique différente (semaine entière vs présence
-  // ponctuelle à un événement donné).
-  const evenementsAConfirmer = await fetchMesEvenementsAConfirmer(state.agent.id);
+  // ponctuelle à un événement donné). Chargés plus haut, en parallèle.
   const confirmationHTML = evenementsAConfirmer.length ? `
     <div class="card">
       <h3>Événements à confirmer</h3>
@@ -2078,13 +2117,19 @@ async function renderDispos(view){
   if (exempte) {
     dispoHTML = '<div class="card"><h3>Astreintes</h3><div class="empty">Vous êtes exempté des astreintes par l\'administrateur — aucune disponibilité à déclarer.</div></div>';
   } else {
-    const { data: sem, error: e1 } = await sb.from('semaines').select('*').eq('statut','ouverte').gte('date_limite_dispo', today).order('date_debut');
+    const [
+      { data: sem, error: e1 },
+      { data: md, error: e2 },
+      { data: mesAstreintes }
+    ] = await Promise.all([
+      sb.from('semaines').select('*').eq('statut','ouverte').gte('date_limite_dispo', today).order('date_debut'),
+      sb.from('disponibilites').select('*').eq('agent_id', state.agent.id),
+      sb.from('planning').select('*, semaines(*)').eq('agent_id', state.agent.id)
+    ]);
     if (e1) { view.innerHTML = '<div class="card"><div class="empty">Erreur de chargement des semaines.</div></div>'; return; }
     semaines = sem;
-    const { data: md, error: e2 } = await sb.from('disponibilites').select('*').eq('agent_id', state.agent.id);
     if (e2) { view.innerHTML = '<div class="card"><div class="empty">Erreur de chargement de vos disponibilités.</div></div>'; return; }
     mesDispos = md;
-    const { data: mesAstreintes } = await sb.from('planning').select('*, semaines(*)').eq('agent_id', state.agent.id);
     (mesDispos||[]).forEach(d => dispoMap[d.semaine_id] = d);
 
     // Prochaine astreinte à venir, mise en avant en haut de l'écran.
@@ -2213,16 +2258,29 @@ async function renderDispos(view){
 // qui revérifie tout (titulaire réel, agent cible actif, etc.)
 // =========================================================
 async function renderPlanningAgent(view){
-  const { data: semainesToutes, error: e1 } = await sb.from('semaines').select('*').eq('statut','publiee').order('date_debut');
-  if (e1) { view.innerHTML = '<div class="card"><div class="empty">Erreur de chargement du planning.</div></div>'; return; }  const { data: plannings } = await sb.from('planning').select('*');
-  const agents = await fetchAgents(); // actifs seulement : pour la liste « Échanger avec… »
-  const agentsTous = await fetchAgentsAvecInactifs(); // pour afficher qui était assigné, même désactivé depuis
+  // 1er lot en parallèle : tout ce qui ne dépend de rien d'autre.
+  const [
+    { data: semainesToutes, error: e1 },
+    { data: plannings },
+    agents,        // actifs seulement : pour la liste « Échanger avec… »
+    agentsTous,    // pour afficher qui était assigné, même désactivé depuis
+    agentsCommunauxCal
+  ] = await Promise.all([
+    sb.from('semaines').select('*').eq('statut','publiee').order('date_debut'),
+    sb.from('planning').select('*'),
+    fetchAgents(),
+    fetchAgentsAvecInactifs(),
+    fetchAgentsCommunaux(false)
+  ]);
+  if (e1) { view.innerHTML = '<div class="card"><div class="empty">Erreur de chargement du planning.</div></div>'; return; }
   const agentById = Object.fromEntries(agentsTous.map(a => [a.id, a]));
   const planByWeek = Object.fromEntries((plannings||[]).map(p => [p.semaine_id, p]));
-  const remplacantsParDate = await fetchRemplacantsParDate(agentsTous);
-  const evenementsParDate = await fetchEvenementsParDate(agentsTous);
-  const agentsCommunauxCal = await fetchAgentsCommunaux(false);
-  const planningAgentsParDate = await fetchPlanningAgentsParDate(agentsCommunauxCal);
+  // 2e lot en parallèle : ce qui a besoin de la liste des agents.
+  const [remplacantsParDate, evenementsParDate, planningAgentsParDate] = await Promise.all([
+    fetchRemplacantsParDate(agentsTous),
+    fetchEvenementsParDate(agentsTous),
+    fetchPlanningAgentsParDate(agentsCommunauxCal)
+  ]);
   const { data: remplacementsAcceptes } = await sb.from('remplacements_jour').select('*').eq('statut','acceptee');
   const remplacementsParSemaine = {};
   (remplacementsAcceptes||[]).forEach(r => { (remplacementsParSemaine[r.semaine_id] ||= []).push(r); });
@@ -2483,19 +2541,29 @@ async function renderEchangesAgent(view){
 async function renderPlanningAdmin(view){
   const { data: semainesToutes, error } = await sb.from('semaines').select('*').order('date_debut');
   if (error) { view.innerHTML = '<div class="card"><div class="empty">Erreur de chargement des semaines.</div></div>'; return; }
-  const { data: dispos } = await sb.from('disponibilites').select('*');
-  const { data: plannings } = await sb.from('planning').select('*');
-  const agents = await fetchAgentsAdmin(); // besoin de l'email pour publier/relancer
+  const [
+    { data: dispos },
+    { data: plannings },
+    agents,        // besoin de l'email pour publier/relancer
+    agentsTous,
+    agentsCommunauxCal
+  ] = await Promise.all([
+    sb.from('disponibilites').select('*'),
+    sb.from('planning').select('*'),
+    fetchAgentsAdmin(),
+    fetchAgentsAvecInactifs(),
+    fetchAgentsCommunaux(false)
+  ]);
   const agentById = Object.fromEntries(agents.map(a => [a.id, a]));
-  const agentsTous = await fetchAgentsAvecInactifs();
   const agentByIdTous = Object.fromEntries(agentsTous.map(a => [a.id, a])); // pour l'affichage, même désactivé
   const planByWeek = Object.fromEntries((plannings||[]).map(p => [p.semaine_id, p]));
   const dispoBySemaine = {};
   (dispos||[]).forEach(d => { (dispoBySemaine[d.semaine_id] ||= []).push(d); });
-  const remplacantsParDate = await fetchRemplacantsParDate(agentsTous);
-  const evenementsParDate = await fetchEvenementsParDate(agentsTous);
-  const agentsCommunauxCal = await fetchAgentsCommunaux(false);
-  const planningAgentsParDate = await fetchPlanningAgentsParDate(agentsCommunauxCal);
+  const [remplacantsParDate, evenementsParDate, planningAgentsParDate] = await Promise.all([
+    fetchRemplacantsParDate(agentsTous),
+    fetchEvenementsParDate(agentsTous),
+    fetchPlanningAgentsParDate(agentsCommunauxCal)
+  ]);
 
   const resumeHTML = astreinteActuelleHTML(semainesToutes, planByWeek, agentByIdTous, state.agent.id, remplacantsParDate);
 
@@ -3063,11 +3131,13 @@ async function renderEchangesAdmin(view){
 // consulter en détail et supprimer.
 // =========================================================
 async function renderEvenementsGestion(view){
-  const { data: evenements, error } = await sb.from('evenements').select('*').order('date');
+  const [{ data: evenements, error }, { data: liens }, { data: reponses }, agentsTous] = await Promise.all([
+    sb.from('evenements').select('*').order('date'),
+    sb.from('evenements_agents').select('*'),
+    sb.from('evenements_reponses').select('*'),
+    fetchAgentsAvecInactifs()
+  ]);
   if (error) { view.innerHTML = '<div class="card"><div class="empty">Erreur de chargement des événements.</div></div>'; return; }
-  const { data: liens } = await sb.from('evenements_agents').select('*');
-  const { data: reponses } = await sb.from('evenements_reponses').select('*');
-  const agentsTous = await fetchAgentsAvecInactifs();
   const agentById = Object.fromEntries(agentsTous.map(a => [a.id, a]));
   // Seuls les élus/agents actifs sont proposés comme participants — jamais
   // un compte désactivé (cohérent avec le reste de l'appli : un compte
@@ -3457,11 +3527,17 @@ async function renderDashboardAdmin(view){
   const anomaliesHTML = `<div class="card"><h3>⚠️ Anomalies</h3>${anomaliesItems || '<div class="empty">Aucune anomalie détectée.</div>'}</div>`;
 
   const prochainesAstreintes = semainesPublieesFutures.slice(0, 4);
+  // Libellé d'après les dates réelles de la semaine (et non sa position
+  // dans la liste) : si la semaine en cours n'est pas publiée, la première
+  // ligne ne doit pas s'afficher « Cette semaine ».
+  const lundiProchain = lundiDeLaSemaine(new Date()); lundiProchain.setDate(lundiProchain.getDate() + 7);
+  const lundiProchainISO = toISODate(lundiProchain);
   const prochainesHTML = prochainesAstreintes.length ? `<div class="card"><h3>📅 Prochaines astreintes</h3>` +
-    prochainesAstreintes.map((s,i) => {
+    prochainesAstreintes.map((s) => {
       const p = planByWeek[s.id];
       const agent = p ? agentById[p.agent_id] : null;
-      const label = i === 0 ? 'Cette semaine' : (i === 1 ? 'Semaine prochaine' : weekLabel(s));
+      const label = (s.date_debut <= today && s.date_fin >= today) ? 'Cette semaine'
+        : (s.date_debut === lundiProchainISO ? 'Semaine prochaine' : weekLabel(s));
       const telHref = agent && agent.telephone ? agent.telephone.replace(/[^\d+]/g,'') : '';
       return `<div class="dash-item">
         <div><div class="week-sub">${escapeHTML(label)}</div><strong>${agent ? '👤 ' + escapeHTML(agent.nom) : 'Non assigné'}</strong>
@@ -3975,7 +4051,7 @@ async function renderPlanningAgentsCommunaux(view){
       agentsCommunaux.forEach(a => {
         const l = ligneParJourAgent[iso + '|' + a.id];
         const ligne = [
-          formatDateFR(iso), joursLabels[i], a.nom,
+          formatDateCSV(iso), joursLabels[i], a.nom,
           l ? typePlanningAgentLabel(l.type) : 'Non planifié',
           (l && l.matin_debut) || '', (l && l.matin_fin) || '', (l && l.apresmidi_debut) || '', (l && l.apresmidi_fin) || '', (l && l.lieu) || '',
           (l && l.remplacant_id && agentById[l.remplacant_id]) ? agentById[l.remplacant_id].nom : ''
@@ -4284,7 +4360,7 @@ async function renderQuiEstPresent(view, agentsCommunaux, gestion, toggleHTML){
     agentsCommunaux.forEach(a => {
       const l = ligneParAgent[a.id];
       const ligne = [
-        formatDateFR(dateISO), a.nom, l ? typePlanningAgentLabel(l.type) : 'Non planifié',
+        formatDateCSV(dateISO), a.nom, l ? typePlanningAgentLabel(l.type) : 'Non planifié',
         (l && l.matin_debut) || '', (l && l.matin_fin) || '', (l && l.apresmidi_debut) || '', (l && l.apresmidi_fin) || '', (l && l.lieu) || '',
         (l && l.remplacant_id && agentById[l.remplacant_id]) ? agentById[l.remplacant_id].nom : ''
       ];
@@ -4427,7 +4503,7 @@ async function renderPlanningAgentsMois(view, agentsCommunaux, gestion, toggleHT
       (lignesParJour[iso] || []).forEach(l => {
         const a = agentById[l.agent_id];
         const ligne = [
-          formatDateFR(iso), a ? a.nom : '?', typePlanningAgentLabel(l.type),
+          formatDateCSV(iso), a ? a.nom : '?', typePlanningAgentLabel(l.type),
           l.matin_debut || '', l.matin_fin || '', l.apresmidi_debut || '', l.apresmidi_fin || '', l.lieu || '',
           (l.remplacant_id && agentById[l.remplacant_id]) ? agentById[l.remplacant_id].nom : ''
         ];
