@@ -279,8 +279,9 @@
   .cal-cell.cal-empty{border-color:transparent;background:transparent;}
   .cal-day{font-weight:500;font-size:.72rem;line-height:1.3;}
   .cal-cell.cal-astreinte{background:#EDF2EE;border-color:#CFDED2;}
-  .cal-cell.cal-mine{background:var(--tuile);border-color:var(--tuile);}
-  .cal-cell.cal-mine .cal-day, .cal-cell.cal-mine .cal-agent{color:var(--white);}
+  /* Ses propres jours d'astreinte : teinte tuile claire + contour tuile. */
+  .cal-cell.cal-mine{border:2px solid var(--tuile) !important;}
+  .cal-cell.cal-mine .cal-nom{font-weight:700;}
   .cal-agent{
     font-size:.56rem;
     line-height:1.1;
@@ -333,6 +334,21 @@
   }
   .cal-cell.cal-mine .cal-more{color:var(--white);}
   .cal-cell.cal-chargee{border-color:var(--ocre);border-width:2px;}
+  /* Couleur de l'agent d'astreinte : fond teinté + son nom en tête de
+     semaine (le lundi, ou le 1er du mois, ou le jour d'un remplacement). */
+  .cal-cell.cal-agent-teinte{border-color:transparent;}
+  .cal-nom{
+    width:100%;font-size:.55rem;font-weight:600;line-height:1.2;
+    text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    margin-top:1px;padding:0 1px;
+  }
+  /* Événements : une pastille de couleur par élément (détail au toucher). */
+  .cal-dots{display:flex;flex-wrap:wrap;justify-content:center;gap:2px;margin-top:auto;padding-top:2px;}
+  .cal-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 1px rgba(255,255,255,.8);}
+  .cal-dot-plus{font-size:.5rem;font-weight:700;line-height:7px;color:var(--navy);}
+  /* Aujourd'hui : case entourée et numéro du jour en pastille. */
+  .cal-cell.cal-aujourdhui{box-shadow:0 0 0 2px var(--navy);}
+  .cal-cell.cal-aujourdhui .cal-day{background:var(--navy);color:var(--white) !important;border-radius:10px;padding:0 5px;}
   /* Détail d'une journée (ouvert au clic sur une cellule) */
   .jour-detail-item{
     border-left:4px solid var(--stone-dark);
@@ -391,6 +407,8 @@
     .cal-day{font-size:.85rem;}
     .cal-item{font-size:.68rem;padding:1px 4px;line-height:1.4;}
     .cal-more{font-size:.68rem;}
+    .cal-nom{font-size:.68rem;}
+    .cal-dot{width:9px;height:9px;}
   }
 
   /* Tableau de bord admin */
@@ -594,7 +612,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.10.28b";
+const APP_VERSION = "2026.10.28c";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -996,6 +1014,21 @@ function astreinteActuelleHTML(semainesToutes, planByWeek, agentById, meId, remp
     </div>`;
 }
 
+// Couleurs des agents d'astreinte dans le calendrier (fond clair + texte
+// foncé, lisibles). Attribuées dans l'ordre alphabétique des agents, donc
+// stables d'un mois à l'autre. La personne connectée garde la couleur tuile.
+const PALETTE_AGENTS = [
+  ['#DCE8F5','#1F4E79'], ['#E1EFD9','#2E6B2E'], ['#F6E3CF','#8A4B12'], ['#EADCF2','#5B2C7A'],
+  ['#D6EEEC','#1C625E'], ['#F2EDC9','#6B5B0E'], ['#F3DCE4','#7D2A4A'], ['#E4E1F5','#3B3A80']
+];
+function couleurAgent(agent, agentById, meId){
+  if (!agent) return null;
+  if (meId && agent.id === meId) return ['#F9D9CC', '#8C2E14'];
+  const ids = Object.values(agentById).slice().sort((a,b) => (a.nom||'').localeCompare(b.nom||'')).map(a => a.id);
+  const i = Math.max(0, ids.indexOf(agent.id));
+  return PALETTE_AGENTS[i % PALETTE_AGENTS.length];
+}
+
 function monthLabelFR(year, month){
   return new Date(year, month, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
 }
@@ -1038,27 +1071,35 @@ function renderMonthCalendarHTML(semainesPubliees, planByWeek, agentById, meId, 
     const planningJour = (planningAgentsParDate && planningAgentsParDate[iso]) || [];
     joursData[iso] = { agent, remplacant, titulaire, evenementsJour, planningJour };
 
-    // Une "carte" compacte par élément notable du jour (événements +
-    // planning agents communaux) — l'astreinte n'y figure plus : elle a
-    // déjà son propre signal (le fond vert de la cellule) et un nom en
-    // plus sur chaque jour n'apportait rien vu qu'il y en a une tous les
-    // jours sans exception. Le nom reste disponible dans la légende et
-    // au clic sur le jour. Au-delà de 3 éléments, un indicateur "+N"
-    // prend le relais pour ne pas surcharger une cellule de 7 colonnes.
-    const items = [];
-    evenementsJour.forEach(ev => items.push({ couleur: typeEvenementCouleur(ev.type), texte: typeEvenementLabel(ev.type) + (ev.heure ? ' ' + ev.heure : '') }));
-    planningJour.forEach(l => items.push({ couleur: typePlanningAgentCouleur(l.type), texte: `${l.nomAgent} — ${typePlanningAgentLabel(l.type)}` }));
-    const MAX_VISIBLE = 3;
-    const visibles = items.slice(0, MAX_VISIBLE);
-    const reste2 = items.length - visibles.length;
-    const chargee = items.length >= 3;
+    // Pastilles : une par événement ou ligne du planning agents (le détail
+    // s'affiche au toucher du jour et dans la liste sous le calendrier).
+    const pastilles = [];
+    evenementsJour.forEach(ev => pastilles.push({ couleur: typeEvenementCouleur(ev.type), titre: ev.intitule }));
+    planningJour.forEach(l => pastilles.push({ couleur: typePlanningAgentCouleur(l.type), titre: `${l.nomAgent} — ${typePlanningAgentLabel(l.type)}` }));
+    const MAX_PASTILLES = 4;
+    const visibles = pastilles.slice(0, MAX_PASTILLES);
+    const enPlus = pastilles.length - visibles.length;
 
-    cellsHTML += `<div class="cal-cell ${agent ? 'cal-astreinte' : ''} ${mine ? 'cal-mine' : ''} ${chargee ? 'cal-chargee' : ''}" data-date="${iso}">
+    // Nom de l'agent : en tête de semaine (lundi), le 1er du mois, et chaque
+    // jour où l'agent change (remplacement, ou lendemain d'un remplacement).
+    const veille = new Date(year, month, d - 1);
+    const isoVeille = toISODate(veille);
+    const sVeille = trouverSemaine(veille);
+    const pVeille = sVeille ? planByWeek[sVeille.id] : null;
+    const agentVeille = (remplacantsParDate && remplacantsParDate[isoVeille]) || (pVeille ? agentById[pVeille.agent_id] : null);
+    const afficherNom = agent && (d === 1 || isoJourSemaine(date) === 1 || !agentVeille || agentVeille.id !== agent.id);
+    const couleur = couleurAgent(agent, agentById, meId);
+    const style = couleur ? `background:${couleur[0]};color:${couleur[1]};` : '';
+    const nomAffiche = agent ? (mine ? 'Vous' : nomCourt(agent)) + (remplacant ? '*' : '') : '';
+    const aujourdhui = iso === toISODate(new Date());
+
+    cellsHTML += `<div class="cal-cell ${agent ? 'cal-astreinte cal-agent-teinte' : ''} ${mine ? 'cal-mine' : ''} ${aujourdhui ? 'cal-aujourdhui' : ''}" data-date="${iso}" style="${style}" title="${agent ? escapeHTML('Astreinte : ' + agent.nom) : ''}">
       <div class="cal-day">${d}</div>
-      <div class="cal-items">
-        ${visibles.map(it => `<div class="cal-item" style="background:${it.couleur};">${escapeHTML(it.texte)}</div>`).join('')}
-        ${reste2 > 0 ? `<div class="cal-more">+${reste2}</div>` : ''}
-      </div>
+      ${afficherNom ? `<div class="cal-nom">${escapeHTML(nomAffiche)}</div>` : ''}
+      ${visibles.length ? `<div class="cal-dots">
+        ${visibles.map(pt => `<span class="cal-dot" style="background:${pt.couleur};" title="${escapeHTML(pt.titre)}"></span>`).join('')}
+        ${enPlus > 0 ? `<span class="cal-dot-plus">+${enPlus}</span>` : ''}
+      </div>` : ''}
     </div>`;
   }
   state.calJoursData = joursData;
@@ -1078,7 +1119,8 @@ function renderMonthCalendarHTML(semainesPubliees, planByWeek, agentById, meId, 
       ${semainesDuMois.map(s => {
         const p = planByWeek[s.id];
         const agent = p ? agentById[p.agent_id] : null;
-        return `<span><i style="background:${agent && meId && agent.id===meId ? 'var(--tuile)' : '#CFDED2'};"></i>${escapeHTML(weekLabel(s))} — ${agent ? escapeHTML(agent.nom) : 'non assigné'}</span>`;
+        const c = couleurAgent(agent, agentById, meId);
+        return `<span><i style="background:${c ? c[0] : '#CFDED2'};border:1px solid ${c ? c[1] : '#CFDED2'};"></i>${escapeHTML(weekLabel(s))} — ${agent ? escapeHTML(agent.nom) : 'non assigné'}</span>`;
       }).join('')}
       ${Object.keys(remplacantsParDate||{}).some(iso => iso >= moisDebut && iso <= moisFin) ? '<span style="opacity:.7;">* remplacement ponctuel ce jour-là</span>' : ''}
       ${evenementsDuMois.flatMap(([iso, evs]) => evs.map(ev =>
