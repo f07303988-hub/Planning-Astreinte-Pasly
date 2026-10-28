@@ -11,7 +11,7 @@
 //     interceptée, elle exige le réseau.
 // Les données gardées sont effacées à la déconnexion (message « vider-donnees »).
 
-const VERSION = '2026-10-27';
+const VERSION = '2026-10-28';
 const CACHE_APPLI = 'appli-' + VERSION;
 const CACHE_DONNEES = 'donnees';
 const FICHIERS_APPLI = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];

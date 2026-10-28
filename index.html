@@ -558,6 +558,7 @@
     <div class="who">
       <span id="who-name"></span>
       <button id="notif-btn" class="notif-btn hidden" aria-label="Notifications">🔔<span id="notif-badge" class="notif-badge hidden">0</span></button>
+      <button id="agenda-btn" title="Recevoir mes astreintes dans l'agenda de mon téléphone">📅 Agenda</button>
       <button id="set-password-btn">Mot de passe</button>
       <button id="logout-btn">Déconnexion</button>
     </div>
@@ -588,7 +589,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.10.27e";
+const APP_VERSION = "2026.10.28";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1677,6 +1678,55 @@ function arreterSurveillanceInactivite(){
 // être mis en pause entretemps.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') verifierInactiviteEcoulee();
+});
+
+// =========================================================
+// ABONNEMENT À L'AGENDA — lien personnel (code secret) vers la fonction
+// serveur « agenda-ics », que le téléphone relit régulièrement.
+// =========================================================
+function lienAgenda(jeton){
+  return SUPABASE_URL + '/functions/v1/agenda-ics?t=' + encodeURIComponent(jeton);
+}
+async function ouvrirAgenda(){
+  if (!navigator.onLine) { showToast('Une connexion Internet est nécessaire.', 'error'); return; }
+  const { data: jeton, error } = await sb.rpc('obtenir_jeton_agenda');
+  if (error || !jeton) { showToast('Erreur : ' + (error ? error.message : 'lien indisponible.'), 'error'); return; }
+  afficherModaleAgenda(jeton);
+}
+function afficherModaleAgenda(jeton){
+  const https = lienAgenda(jeton);
+  const webcal = https.replace(/^https:/, 'webcal:');
+  const google = 'https://calendar.google.com/calendar/render?cid=' + encodeURIComponent(webcal);
+  openModal(`
+    <h3>📅 Mes astreintes dans mon agenda</h3>
+    <p class="week-sub" style="margin-bottom:10px;">Abonnez-vous une fois : vos semaines d'astreinte, vos remplacements et les événements où vous êtes désigné(e) apparaissent dans l'agenda de votre téléphone et se mettent à jour d'eux-mêmes (avec quelques heures de décalage possible).</p>
+    <a class="primary" href="${escapeHTML(webcal)}" style="display:block;text-align:center;padding:10px;border-radius:var(--radius);text-decoration:none;margin-bottom:8px;background:var(--navy);color:var(--white);">iPhone / iPad / Mac : s'abonner</a>
+    <a href="${escapeHTML(google)}" target="_blank" rel="noopener" style="display:block;text-align:center;padding:10px;border-radius:var(--radius);text-decoration:none;margin-bottom:6px;border:1px solid var(--navy);color:var(--navy);">Google Agenda (Android) : s'abonner</a>
+    <p class="week-sub" style="margin-bottom:12px;">Sur Android, si le lien ne fonctionne pas depuis le téléphone, faites-le une fois depuis un ordinateur : Google Agenda → « Autres agendas » → « + » → « À partir de l'URL », puis collez le lien ci-dessous. L'agenda apparaîtra ensuite sur le téléphone.</p>
+    <button class="ghost" id="agenda-copier" style="width:100%;margin-bottom:12px;">Copier le lien</button>
+    <p class="week-sub" style="margin-bottom:6px;">🔒 Ce lien est personnel : ne le partagez pas. S'il a circulé par erreur, remplacez-le (l'ancien cessera de fonctionner, il faudra se réabonner).</p>
+    <div class="modal-actions" style="justify-content:space-between;">
+      <button class="ghost" id="agenda-regenerer" style="color:var(--tuile);">Remplacer le lien</button>
+      <button class="ghost" id="modal-cancel">Fermer</button>
+    </div>
+  `);
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+  document.getElementById('agenda-copier').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(https); showToast('Lien copié.', 'success'); }
+    catch(e) { window.prompt('Copiez ce lien :', https); }
+  });
+  document.getElementById('agenda-regenerer').addEventListener('click', async (e) => {
+    if (!confirm('Remplacer votre lien d\'agenda ?\n\nL\'ancien lien cessera immédiatement de fonctionner : il faudra supprimer l\'ancien abonnement de votre téléphone et vous réabonner.')) return;
+    await withLoading(e.currentTarget, 'Remplacement…', async () => {
+      const { data: nouveau, error } = await sb.rpc('regenerer_jeton_agenda');
+      if (error || !nouveau) { showToast('Erreur : ' + (error ? error.message : 'action impossible.'), 'error'); return; }
+      showToast('Nouveau lien créé. Réabonnez-vous avec ce lien.', 'success');
+      afficherModaleAgenda(nouveau);
+    });
+  });
+}
+document.getElementById('agenda-btn').addEventListener('click', () => {
+  ouvrirAgenda().catch(e => showToast('Erreur : ' + (e && e.message ? e.message : 'action impossible.'), 'error'));
 });
 
 document.getElementById('set-password-btn').addEventListener('click', () => {
