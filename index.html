@@ -546,6 +546,11 @@
       <input type="password" id="login-password" placeholder="Mot de passe (facultatif)" autocomplete="current-password">
       <button type="button" class="pw-toggle" data-target="login-password">Afficher</button>
     </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:.88rem;margin:4px 0 10px;cursor:pointer;">
+      <input type="checkbox" id="login-rester" checked style="width:16px;height:16px;flex-shrink:0;">
+      Rester connecté sur cet appareil
+    </label>
+    <p class="week-sub" style="margin:-6px 0 10px;font-size:.78rem;">Décochez sur un ordinateur partagé (mairie…) : vous serez alors déconnecté après 15 minutes d'inactivité.</p>
     <button class="primary" id="login-btn">Se connecter / Recevoir le lien</button>
     <div class="msg" id="login-msg"></div>
     <div class="app-credit">Développé par François Liéveaux<br><span id="app-version"></span></div>
@@ -589,7 +594,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.10.28";
+const APP_VERSION = "2026.10.28b";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1635,12 +1640,28 @@ const INACTIVITE_LIMITE_MS = 15 * 60 * 1000; // 15 minutes
 const INACTIVITE_STORAGE_KEY = 'derniere_activite';
 let inactiviteTimer = null;
 
+// « Rester connecté sur cet appareil » (case de l'écran de connexion,
+// cochée par défaut) : dans ce cas, aucune déconnexion automatique.
+// La déconnexion après 15 minutes ne s'applique que si la case a été
+// décochée (ordinateur partagé).
+const RESTER_CONNECTE_KEY = 'rester_connecte';
+function resterConnecte(){
+  try { return localStorage.getItem(RESTER_CONNECTE_KEY) !== '0'; } catch(e) { return true; }
+}
+(function brancherCaseResterConnecte(){
+  const caseRester = document.getElementById('login-rester');
+  caseRester.checked = resterConnecte();
+  caseRester.addEventListener('change', () => {
+    try { localStorage.setItem(RESTER_CONNECTE_KEY, caseRester.checked ? '1' : '0'); } catch(e) {}
+  });
+})();
+
 function enregistrerActivite(){
   try { localStorage.setItem(INACTIVITE_STORAGE_KEY, String(Date.now())); } catch(e) {}
 }
 
 async function verifierInactiviteEcoulee(){
-  if (!state.session) return false;
+  if (!state.session || resterConnecte()) return false;
   // Hors ligne, on ne déconnecte pas : sinon plus aucune consultation
   // possible avant le retour du réseau. Le contrôle reprend ensuite.
   if (!navigator.onLine) return false;
@@ -1659,7 +1680,7 @@ function demarrerSurveillanceInactivite(){
   enregistrerActivite();
   clearTimeout(inactiviteTimer);
   inactiviteTimer = setTimeout(async () => {
-    if (!state.session || !navigator.onLine) return;
+    if (!state.session || !navigator.onLine || resterConnecte()) return;
     await sb.auth.signOut();
     showToast('Déconnecté après 15 minutes d\'inactivité.', 'info');
   }, INACTIVITE_LIMITE_MS);
@@ -2718,7 +2739,7 @@ async function renderSemainesAdmin(view){
       </div>
       <div class="msg" id="periode-msg"></div>
     </div>
-    <div class="card"><h3>Équité — nombre d'astreintes par agent</h3><div id="balance"></div></div>
+    <div class="card"><h3>Équité — nombre d'astreintes publiées par agent</h3><div id="balance"></div></div>
     <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
       <h3 style="margin:0;">Semaines</h3>
       ${(semainesToutes||[]).some(s => s.statut === 'ouverte') ? `<button class="ghost" id="btn-relancer-tout">Relancer pour toutes les semaines ouvertes</button>` : ''}
@@ -2915,9 +2936,14 @@ async function renderSemainesAdmin(view){
   // Tableau d'équité — n'inclut que les agents éligibles aux astreintes
   const agentsTous = await fetchAgents();
   const agents = agentsTous.filter(a => a.eligible_astreinte !== false && a.role !== 'lecteur');
-  const { data: plannings } = await sb.from('planning').select('*');
+  // Seules les astreintes publiées comptent (passées et à venir) : une simple
+  // proposition non publiée ne doit pas fausser la répartition affichée.
+  const { data: plannings } = await sb.from('planning').select('agent_id, semaines(statut)');
   const counts = Object.fromEntries(agents.map(a => [a.id, 0]));
-  (plannings||[]).forEach(p => { if (counts[p.agent_id] !== undefined) counts[p.agent_id]++; });
+  (plannings||[]).forEach(p => {
+    if (!p.semaines || p.semaines.statut !== 'publiee') return;
+    if (counts[p.agent_id] !== undefined) counts[p.agent_id]++;
+  });
   const valeurs = Object.values(counts);
   const ecart = valeurs.length ? Math.max(...valeurs) - Math.min(...valeurs) : 0;
   const rows = agents.slice().sort((a,b) => counts[a.id]-counts[b.id])
