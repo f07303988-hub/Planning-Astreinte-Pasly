@@ -8,6 +8,8 @@
 // le lien reçu par email.
 //
 //   { agent_id }  → uniquement cet agent
+//   { agent_id, ancien_email } → l'adresse de la fiche a changé : le compte existant
+//                    prend la nouvelle adresse (pas de second compte en double)
 //   {}            → tous les agents actifs concernés
 //   { test:true } → liste ce qui serait fait, sans rien créer ni envoyer
 //
@@ -60,7 +62,7 @@ Deno.serve(async (req) => {
   const { data: moi } = await sb.from('agents').select('role, actif').ilike('email', u.user.email).maybeSingle();
   if (!moi || !moi.actif || moi.role !== 'admin') return reponse({ erreur: 'Réservé aux administrateurs.' }, 403);
 
-  let corps: { agent_id?: string; test?: boolean } = {};
+  let corps: { agent_id?: string; ancien_email?: string; test?: boolean } = {};
   try { corps = await req.json(); } catch { /* corps vide accepté */ }
 
   let q = sb.from('agents').select('id, nom, email, actif, categorie').eq('actif', true).eq('categorie', 'elu').not('email', 'is', null);
@@ -69,12 +71,29 @@ Deno.serve(async (req) => {
   if (ea) return reponse({ erreur: ea.message }, 500);
 
   // Comptes existants (comparaison sans tenir compte des majuscules)
-  const existants = new Set<string>();
+  const existants = new Map<string, string>();
   for (let page = 1; ; page++) {
     const { data, error } = await sb.auth.admin.listUsers({ page, perPage: 1000 });
     if (error) return reponse({ erreur: error.message }, 500);
-    data.users.forEach(x => x.email && existants.add(x.email.toLowerCase()));
+    data.users.forEach(x => x.email && existants.set(x.email.toLowerCase(), x.id));
     if (data.users.length < 1000) break;
+  }
+  // Changement d'adresse : le compte de l'ancienne adresse est déplacé vers la nouvelle
+  const ancien = String(corps.ancien_email ?? '').trim().toLowerCase();
+  const deplaces: string[] = [];
+  if (corps.agent_id && ancien && existants.has(ancien)) {
+    const a = (agents ?? [])[0];
+    const nouvelle = String(a?.email ?? '').trim().toLowerCase();
+    if (a && nouvelle && nouvelle !== ancien && !existants.has(nouvelle)) {
+      // L'ancienne adresse ne doit plus être celle d'une autre fiche
+      const { data: autre } = await sb.from('agents').select('id').ilike('email', ancien).maybeSingle();
+      if (!autre) {
+        if (corps.test) return reponse({ test: true, deplace: `${ancien} → ${nouvelle}` });
+        const { error } = await sb.auth.admin.updateUserById(existants.get(ancien)!, { email: nouvelle, email_confirm: true });
+        if (error) return reponse({ crees: [], echecs: [`${a.nom} : ${error.message}`] }, 207);
+        existants.delete(ancien); existants.set(nouvelle, 'deplace'); deplaces.push(a.nom);
+      }
+    }
   }
   const aCreer = (agents ?? []).filter(a => a.email && !existants.has(a.email.toLowerCase()));
   if (corps.test) return reponse({ test: true, a_creer: aCreer.map(a => a.nom) });
@@ -87,5 +106,5 @@ Deno.serve(async (req) => {
     crees.push(a.nom);
     try { await accueil(a.email, a.nom); } catch (e) { sansEmail.push(a.nom); console.error(e); }
   }
-  return reponse({ crees, echecs, email_non_envoye: sansEmail }, echecs.length ? 207 : 200);
+  return reponse({ crees, deplaces, echecs, email_non_envoye: sansEmail }, echecs.length ? 207 : 200);
 });

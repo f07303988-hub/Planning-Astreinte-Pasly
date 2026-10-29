@@ -1597,19 +1597,20 @@ async function ouvrirQuiEstDisponible(){
 // Les inscriptions libres étant fermées, le compte de connexion d'un agent est
 // créé par le serveur (fonction « creer-acces », réservée aux administrateurs),
 // qui lui envoie aussi un email d'accueil.
-async function creerAcces(agentId){
+async function creerAcces(agentId, ancienEmail){
   try {
-    const { data, error } = await sb.functions.invoke('creer-acces', { body: agentId ? { agent_id: agentId } : {} });
+    const { data, error } = await sb.functions.invoke('creer-acces', { body: agentId ? { agent_id: agentId, ...(ancienEmail ? { ancien_email: ancienEmail } : {}) } : {} });
     if (error) {
       let message = error.message;
       try { const corps = await error.context.json(); if (corps && corps.erreur) message = corps.erreur; } catch(e) {}
       return { crees: [], echecs: [message] };
     }
-    return { crees: data.crees || [], echecs: data.echecs || [], sansEmail: data.email_non_envoye || [] };
+    return { crees: data.crees || [], deplaces: data.deplaces || [], echecs: data.echecs || [], sansEmail: data.email_non_envoye || [] };
   } catch (e) { return { crees: [], echecs: [(e && e.message) || 'Erreur réseau'] }; }
 }
 function messageAcces(r){
   if (r.echecs.length) return { txt: 'Accès non créé : ' + r.echecs.join(' ; '), type: 'error' };
+  if (r.deplaces && r.deplaces.length && !r.crees.length) return { txt: 'Compte de connexion de ' + r.deplaces.join(', ') + ' mis à la nouvelle adresse.', type: 'success' };
   if (!r.crees.length) return null;
   return { txt: 'Accès créé pour ' + r.crees.join(', ') + (r.sansEmail && r.sansEmail.length ? ' (email d\'accueil non envoyé à ' + r.sansEmail.join(', ') + ')' : ' : email d\'accueil envoyé.'), type: r.sansEmail && r.sansEmail.length ? 'error' : 'success' };
 }
@@ -3813,8 +3814,8 @@ async function renderAgentsAdmin(view){
       if (emailChange) {
         const confirmation = confirm(
           'Changer cet email a des conséquences importantes :\n\n' +
-          '• L\'ancienne adresse perd tout accès immédiatement.\n' +
-          '• Un éventuel mot de passe déjà défini ne fonctionnera plus : la personne devra en redéfinir un nouveau après s\'être reconnectée par lien magique à la nouvelle adresse.\n' +
+          '• Son compte de connexion passe à la nouvelle adresse : l\'ancienne ne permet plus de se connecter.\n' +
+          '• Son mot de passe éventuel reste valable, avec la nouvelle adresse.\n' +
           '• Si cette personne est connectée en ce moment même, sa session en cours va cesser de fonctionner (elle devra se reconnecter).\n\n' +
           'Continuer ?'
         );
@@ -3835,7 +3836,7 @@ async function renderAgentsAdmin(view){
       await withLoading(e.currentTarget, 'Enregistrement…', async () => {
         const { error } = await sb.from('agents').update({ nom, telephone: telephone || null, email, role, actif, eligible_astreinte, peut_gerer_evenements, droit_planning_agents }).eq('id', agentId);
         if (!error && actif && email && (!original || (original.email || '').toLowerCase() !== email.toLowerCase() || !original.actif)) {
-          const acces = messageAcces(await creerAcces(agentId));      // nouvelle adresse : son compte de connexion est créé
+          const acces = messageAcces(await creerAcces(agentId, original && original.email));   // nouvelle adresse : son compte suit (ou est créé)
           if (acces) showToast(acces.txt, acces.type);
         }
         if (error) {
