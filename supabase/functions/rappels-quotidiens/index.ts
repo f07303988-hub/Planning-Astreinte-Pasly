@@ -8,7 +8,8 @@
 //   3. aux admins, une alerte quand une semaine débute dans 15 jours ou moins
 //      sans être publiée.
 // Chaque rappel n'est marqué « envoyé » que si l'envoi a réussi : en cas
-// d'échec (quota, panne), il est retenté le lendemain.
+// d'échec (quota, panne), il est retenté le lendemain — uniquement pour les
+// destinataires qui ne l'ont pas encore reçu (table rappels_envoyes).
 //
 // Mode test : ?test=1 renvoie la liste de ce qui SERAIT envoyé, sans rien
 // envoyer ni modifier.
@@ -71,7 +72,9 @@ function estAppelServeur(req: Request): boolean {
   } catch { return false; }
 }
 
-type Envoi = { type: string; email: string; nom: string; sujet: string; texte: string };
+// `cle` (facultative) identifie un rappel pour un destinataire précis :
+// une fois envoyé, il n'est plus jamais renvoyé à cette personne.
+type Envoi = { type: string; email: string; nom: string; sujet: string; texte: string; cle?: string };
 
 Deno.serve(async (req) => {
   if (!estAppelServeur(req)) return new Response('Accès refusé.', { status: 403 });
@@ -94,14 +97,28 @@ Deno.serve(async (req) => {
   const rapport: Envoi[] = [];
   const echecs: string[] = [];
 
-  // Envoie une série de messages ; renvoie true si TOUS sont partis.
+  // Rappels déjà reçus, destinataire par destinataire (voir migration 20261029).
+  // Seuls les 30 derniers jours comptent : un rappel plus ancien ne peut plus être en attente.
+  const il30j = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { data: dejaEnvoyes, error: errR } = await sb.from('rappels_envoyes').select('cle').gte('envoye_le', il30j);
+  if (errR) return new Response(errR.message, { status: 500 });
+  const dejaRecu = new Set((dejaEnvoyes ?? []).map(r => r.cle));
+
+  // Envoie une série de messages ; renvoie true si TOUS sont partis
+  // (ou avaient déjà été reçus lors d'une tentative précédente).
   async function traiter(lot: Envoi[]): Promise<boolean> {
     let ok = true;
     for (const e of lot) {
+      if (e.cle && dejaRecu.has(e.cle)) continue;
       rapport.push(e);
       if (test) continue;
       try { await envoyer({ email: e.email, nom: e.nom }, e.sujet, e.texte); }
-      catch (err) { ok = false; echecs.push(`${e.type} → ${e.email} : ${err}`); }
+      catch (err) { ok = false; echecs.push(`${e.type} → ${e.email} : ${err}`); continue; }
+      if (e.cle) {
+        dejaRecu.add(e.cle);
+        const { error } = await sb.from('rappels_envoyes').upsert({ cle: e.cle }, { onConflict: 'cle', ignoreDuplicates: true });
+        if (error) echecs.push(`mémorisation ${e.cle} : ${error.message}`);
+      }
     }
     return ok;
   }
@@ -123,6 +140,7 @@ Deno.serve(async (req) => {
         .map(l => agentById[l.agent_id]).filter(a => a && a.actif && a.email)
         .map(a => ({
           type: 'evenement', email: a.email, nom: a.nom,
+          cle: `evenement|${ev.id}|${ev.date}|${a.id}`,
           sujet: `Rappel — ${ev.intitule} ${quand}`,
           texte: `Vous êtes désigné(e) pour : ${ev.intitule}, ${quand} ${dateLongue(ev.date)}` +
             `${ev.heure ? ' à ' + ev.heure : ''}${ev.lieu ? ' (' + ev.lieu + ')' : ''}.`
@@ -170,6 +188,7 @@ Deno.serve(async (req) => {
   for (const s of nonPubliees ?? []) {
     const lot = admins.map(a => ({
       type: 'non_publiee', email: a.email, nom: a.nom,
+      cle: `non_publiee|${s.id}|${s.date_debut}|${a.id}`,
       sujet: 'Planning à vérifier',
       texte: `La semaine du ${dateLongue(s.date_debut)} au ${dateLongue(s.date_fin)} n'est toujours pas publiée alors qu'elle approche.`
     }));
