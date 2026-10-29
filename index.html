@@ -1594,6 +1594,26 @@ async function ouvrirQuiEstDisponible(){
 // base, et le serveur vérifie les droits de la personne connectée.
 // Renvoie toujours { ok, envoyes, echecs, erreur } — jamais d'exception.
 // =========================================================
+// Les inscriptions libres étant fermées, le compte de connexion d'un agent est
+// créé par le serveur (fonction « creer-acces », réservée aux administrateurs),
+// qui lui envoie aussi un email d'accueil.
+async function creerAcces(agentId){
+  try {
+    const { data, error } = await sb.functions.invoke('creer-acces', { body: agentId ? { agent_id: agentId } : {} });
+    if (error) {
+      let message = error.message;
+      try { const corps = await error.context.json(); if (corps && corps.erreur) message = corps.erreur; } catch(e) {}
+      return { crees: [], echecs: [message] };
+    }
+    return { crees: data.crees || [], echecs: data.echecs || [], sansEmail: data.email_non_envoye || [] };
+  } catch (e) { return { crees: [], echecs: [(e && e.message) || 'Erreur réseau'] }; }
+}
+function messageAcces(r){
+  if (r.echecs.length) return { txt: 'Accès non créé : ' + r.echecs.join(' ; '), type: 'error' };
+  if (!r.crees.length) return null;
+  return { txt: 'Accès créé pour ' + r.crees.join(', ') + (r.sansEmail && r.sansEmail.length ? ' (email d\'accueil non envoyé à ' + r.sansEmail.join(', ') + ')' : ' : email d\'accueil envoyé.'), type: r.sansEmail && r.sansEmail.length ? 'error' : 'success' };
+}
+
 async function envoyerEmailServeur(action, params){
   try {
     const { data, error } = await sb.functions.invoke('envoyer-email', { body: { action, ...params } });
@@ -3573,7 +3593,15 @@ async function renderAgentsAdmin(view){
   const { data: connexions } = await sb.rpc('agents_dernieres_connexions');
   const connexionById = Object.fromEntries((connexions||[]).map(c => [c.agent_id, c]));
 
+  const sansAcces = (agents||[]).filter(a => a.actif && (a.categorie||'elu') === 'elu' && a.email && !(connexionById[a.id] && connexionById[a.id].premiere_connexion));
+  const sansEmail = (agents||[]).filter(a => a.actif && (a.categorie||'elu') === 'elu' && !a.email);
   view.innerHTML = `
+    ${sansAcces.length || sansEmail.length ? `<div class="card">
+      <h3>Accès à l'application</h3>
+      ${sansAcces.length ? `<div class="week-sub" style="margin-bottom:8px;">${sansAcces.length} agent(s) sans accès : ${sansAcces.map(a => escapeHTML(a.nom)).join(', ')}. Les inscriptions libres étant fermées, leur compte doit être créé ici ; ils reçoivent un email d'accueil puis se connectent avec le lien habituel.</div>
+        <button class="primary" id="btn-creer-acces">Créer les accès et prévenir par email</button>` : ''}
+      ${sansEmail.length ? `<div class="week-sub" style="margin-top:8px;">Sans adresse email (pas d'accès possible) : ${sansEmail.map(a => escapeHTML(a.nom)).join(', ')}.</div>` : ''}
+    </div>` : ''}
     <div class="card">
       <h3>Nouvel agent</h3>
       <div class="week-sub" style="margin-bottom:10px;">Le rôle « Lecteur » donne un accès limité à la consultation du planning (pas de disponibilités à déclarer, jamais candidat aux astreintes) — utile par exemple pour le secrétariat de mairie. Un « Agent communal » n'a pas de compte de connexion : il sert uniquement à être référencé dans le planning des agents communaux.</div>
@@ -3724,7 +3752,7 @@ async function renderAgentsAdmin(view){
     await withLoading(e.currentTarget, 'Création…', async () => {
       // Un lecteur n'a pas vocation à faire des astreintes : on l'exempte par défaut.
       const eligible_astreinte = role !== 'lecteur';
-      const { error } = await sb.from('agents').insert({ nom, email, telephone: telephone || null, role, actif: true, eligible_astreinte, categorie: 'elu' });
+      const { data: cree, error } = await sb.from('agents').insert({ nom, email, telephone: telephone || null, role, actif: true, eligible_astreinte, categorie: 'elu' }).select('id').single();
       if (error) {
         if (error.code === '23505') nmsg.textContent = 'Cet email est déjà utilisé par un autre agent.';
         else if (error.code === '23514') nmsg.textContent = 'Adresse email invalide.';
@@ -3732,7 +3760,18 @@ async function renderAgentsAdmin(view){
         nmsg.className = 'msg err';
         return;
       }
-      showToast('Agent créé.', 'success');
+      const acces = messageAcces(await creerAcces(cree.id));
+      showToast('Agent créé.' + (acces ? ' ' + acces.txt : ''), acces ? acces.type : 'success');
+      renderView();
+    });
+  });
+
+  const btnAcces = document.getElementById('btn-creer-acces');
+  if (btnAcces) btnAcces.addEventListener('click', async (e) => {
+    if (!confirm('Créer le compte de ' + sansAcces.map(a => a.nom).join(', ') + ' et leur envoyer un email d\'accueil ?')) return;
+    await withLoading(e.currentTarget, 'Création…', async () => {
+      const acces = messageAcces(await creerAcces(null)) || { txt: 'Aucun accès à créer.', type: 'success' };
+      showToast(acces.txt, acces.type);
       renderView();
     });
   });
@@ -3795,6 +3834,10 @@ async function renderAgentsAdmin(view){
 
       await withLoading(e.currentTarget, 'Enregistrement…', async () => {
         const { error } = await sb.from('agents').update({ nom, telephone: telephone || null, email, role, actif, eligible_astreinte, peut_gerer_evenements, droit_planning_agents }).eq('id', agentId);
+        if (!error && actif && email && (!original || (original.email || '').toLowerCase() !== email.toLowerCase() || !original.actif)) {
+          const acces = messageAcces(await creerAcces(agentId));      // nouvelle adresse : son compte de connexion est créé
+          if (acces) showToast(acces.txt, acces.type);
+        }
         if (error) {
           if (error.code === '23505') msg.textContent = 'Cet email est déjà utilisé par un autre agent.';
           else if (error.code === '23514') msg.textContent = 'Adresse email invalide.';
