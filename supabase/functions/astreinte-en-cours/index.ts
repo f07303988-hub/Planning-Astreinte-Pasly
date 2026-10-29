@@ -2,6 +2,7 @@
 //
 // Donne au carnet de bord « Pasly Astreinte » (téléphones d'astreinte) qui est
 // d'astreinte aujourd'hui, cette semaine et la semaine suivante, avec le téléphone.
+// Ainsi que la liste des élus (nom, téléphone) pour créer les utilisateurs du carnet.
 //
 //   GET .../functions/v1/astreinte-en-cours?t=<code secret>
 //
@@ -42,7 +43,7 @@ Deno.serve(async (req) => {
   const [{ data: plan }, { data: rempl }, { data: agents }] = await Promise.all([
     ids.length ? sb.from('planning').select('semaine_id, agent_id').in('semaine_id', ids) : Promise.resolve({ data: [] as any[] }),
     sb.from('remplacements_jour').select('date, agent_demandeur_id, agent_remplacant_id').eq('statut', 'acceptee').gte('date', jour).lte('date', ajouterJours(jour, 1)),
-    sb.from('agents').select('id, nom, telephone, actif'),
+    sb.from('agents').select('id, nom, telephone, actif, role, categorie'),
   ]);
   const agent = (id?: string | null) => { const a = (agents ?? []).find(x => x.id === id); return a ? { nom: a.nom, telephone: a.telephone ?? null } : null; };
   const semaine = (s: any) => s ? { debut: s.date_debut, fin: s.date_fin, titulaire: agent((plan ?? []).find(p => p.semaine_id === s.id)?.agent_id) } : null;
@@ -56,6 +57,9 @@ Deno.serve(async (req) => {
     aujourdhui: remplAujourdhui ? { ...agent(remplAujourdhui.agent_remplacant_id), remplace: agent(remplAujourdhui.agent_demandeur_id)?.nom ?? null } : (sc?.titulaire ?? null),
     semaine: sc,
     suivante: semaine(suivante),
+    // Élus actifs (pour créer les utilisateurs du carnet) : nom et téléphone uniquement
+    elus: (agents ?? []).filter(a => a.actif && (a.categorie ?? 'elu') === 'elu' && a.role !== 'lecteur')
+      .map(a => ({ nom: a.nom, telephone: a.telephone ?? null })).sort((x, y) => x.nom.localeCompare(y.nom, 'fr')),
     demain_remplacement: (() => { const r = (rempl ?? []).find(x => x.date === ajouterJours(jour, 1)); return r ? { ...agent(r.agent_remplacant_id), remplace: agent(r.agent_demandeur_id)?.nom ?? null } : null; })(),
   });
 });
