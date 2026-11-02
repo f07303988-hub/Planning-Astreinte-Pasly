@@ -612,7 +612,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.11.02c";
+const APP_VERSION = "2026.11.02d";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -3729,7 +3729,32 @@ async function renderAgentsAdmin(view){
 
   const sansAcces = (agents||[]).filter(a => a.actif && (a.categorie||'elu') === 'elu' && a.email && !(connexionById[a.id] && connexionById[a.id].premiere_connexion));
   const sansEmail = (agents||[]).filter(a => a.actif && (a.categorie||'elu') === 'elu' && !a.email);
-  view.innerHTML = `
+
+  // Liste compacte : une ligne par agent, regroupés (élus, communaux, désactivés).
+  const ORDRE_GROUPES = { elu: 0, communal: 1, inactif: 2 };
+  const TITRES_GROUPES = { elu: 'Élus et secrétariat', communal: 'Agents communaux', inactif: 'Désactivés' };
+  const groupeAgent = a => !a.actif ? 'inactif' : (a.categorie === 'communal' ? 'communal' : 'elu');
+  const agentsTries = [...(agents||[])].sort((x, y) =>
+    ORDRE_GROUPES[groupeAgent(x)] - ORDRE_GROUPES[groupeAgent(y)] || (x.nom||'').localeCompare(y.nom||'', 'fr'));
+  let groupePrecedent = null;
+
+  // Synthèse en haut de l'onglet.
+  const elusActifs = (agents||[]).filter(a => groupeAgent(a) === 'elu');
+  const nbAvecAlertes = elusActifs.filter(a => alertesById[a.id]).length;
+  const nbJamaisConnectes = elusActifs.filter(a => !(connexionById[a.id] && connexionById[a.id].derniere_connexion)).length;
+  const nbCommunaux = (agents||[]).filter(a => groupeAgent(a) === 'communal').length;
+  const syntheseAgents = `
+    <div class="card">
+      <h3>En bref</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <span class="pill publiee">${elusActifs.length} élu${elusActifs.length > 1 ? 's' : ''} / secrétariat actif${elusActifs.length > 1 ? 's' : ''}</span>
+        <span class="pill ${nbAvecAlertes === elusActifs.length ? 'oui' : 'partiel'}">🔔 ${nbAvecAlertes} avec alertes</span>
+        ${nbJamaisConnectes ? `<span class="pill non">⚠ ${nbJamaisConnectes} jamais connecté${nbJamaisConnectes > 1 ? 's' : ''}</span>` : ''}
+        ${nbCommunaux ? `<span class="pill oui">${nbCommunaux} agent${nbCommunaux > 1 ? 's' : ''} communa${nbCommunaux > 1 ? 'ux' : 'l'}</span>` : ''}
+      </div>
+    </div>`;
+
+  view.innerHTML = syntheseAgents + `
     ${sansAcces.length || sansEmail.length ? `<div class="card">
       <h3>Accès à l'application</h3>
       ${sansAcces.length ? `<div class="week-sub" style="margin-bottom:8px;">${sansAcces.length} agent(s) sans accès : ${sansAcces.map(a => escapeHTML(a.nom)).join(', ')}. Les inscriptions libres étant fermées, leur compte doit être créé ici ; ils reçoivent un email d'accueil puis se connectent avec le lien habituel.</div>
@@ -3756,18 +3781,33 @@ async function renderAgentsAdmin(view){
       </div>
       <div class="msg" id="nouvel-agent-msg"></div>
     </div>
-    <div class="card">
-      <h3>Agents</h3>
-      <div class="week-sub" style="margin-bottom:6px;">Modifiez le nom, le téléphone, l'email, le rôle ou l'activation d'un agent. Après un changement d'email, la personne doit se reconnecter avec sa nouvelle adresse (un nouveau lien lui sera envoyé).</div>
-    </div>` + (agents||[]).map(a => {
+` + agentsTries.map(a => {
     const cnx = connexionById[a.id];
     const nbAlertes = alertesById[a.id] || 0;
     const infoConnexion = (cnx && cnx.derniere_connexion)
       ? `Dernière connexion : ${formatDateHeureFR(cnx.derniere_connexion)} (première le ${formatDateHeureFR(cnx.premiere_connexion)})`
         + ` · ${nbAlertes ? '🔔 alertes activées (' + nbAlertes + ' appareil' + (nbAlertes > 1 ? 's' : '') + ')' : '🔕 alertes non activées'}`
       : null;
-    return `
-    <div class="card" data-agent="${escapeHTML(a.id)}" data-categorie="${escapeHTML(a.categorie||'elu')}">
+    // Nouveau groupe : on ferme la carte du précédent et on ouvre la suivante.
+    const groupe = groupeAgent(a);
+    const debutGroupe = groupe !== groupePrecedent
+      ? (groupePrecedent ? '</div>' : '') + `<div class="card"><h3>${TITRES_GROUPES[groupe]} (${agentsTries.filter(x => groupeAgent(x) === groupe).length})</h3>`
+        + (groupePrecedent ? '' : '<div class="week-sub">Touchez un nom pour ouvrir sa fiche.</div>')
+      : '';
+    groupePrecedent = groupe;
+    const communal = a.categorie === 'communal';
+    const pastilles = [
+      a.role === 'admin' && !communal ? '<span class="pill publiee">Admin</span>' : '',
+      a.role === 'lecteur' && !communal ? '<span class="pill partiel">Lecteur</span>' : '',
+      !communal && a.actif && a.eligible_astreinte === false ? '<span class="pill partiel">Exempté</span>' : '',
+      !communal && a.actif ? (infoConnexion ? (nbAlertes ? '<span title="Alertes activées">🔔</span>' : '<span title="Alertes non activées">🔕</span>')
+        : '<span class="pill non">⚠ jamais connecté</span>') : '',
+      communal && a.telephone ? `<span class="week-sub">${escapeHTML(a.telephone)}</span>` : ''
+    ].filter(Boolean).join(' ');
+    return debutGroupe + `
+    <details class="week-accordion" data-agent="${escapeHTML(a.id)}" data-categorie="${escapeHTML(a.categorie||'elu')}">
+      <summary><span style="font-weight:600;">${escapeHTML(a.nom)}</span><span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-left:auto;">${pastilles}</span></summary>
+      <div style="padding-bottom:14px;">
       ${a.categorie === 'communal' ? `
       <div class="week-sub" style="margin-bottom:8px;">Agent communal — sans accès à l'application, référencé uniquement dans le planning des agents communaux.</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -3846,8 +3886,9 @@ async function renderAgentsAdmin(view){
         <button class="ghost" data-role="save">Enregistrer</button>
       </div>
       <div class="msg" data-role="msg"></div>
-    </div>`;
-  }).join('') + `
+      </div>
+    </details>`;
+  }).join('') + (groupePrecedent ? '</div>' : '') + `
     <div class="card">
       <h3>💾 Sauvegarde des données</h3>
       <div class="week-sub" style="margin-bottom:10px;">Une copie complète (agents, planning, disponibilités, échanges, événements…) est envoyée automatiquement par email le 1er de chaque mois. Vous pouvez aussi en télécharger une maintenant. Le fichier contient des données personnelles : à conserver en lieu sûr.</div>
