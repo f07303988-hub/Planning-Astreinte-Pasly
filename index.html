@@ -177,6 +177,11 @@
     content:'▾';color:#8a8272;font-size:.8rem;flex-shrink:0;transition:transform .15s;
   }
   details.week-accordion[open] summary::after{transform:rotate(180deg);}
+  /* Onglet Agents : nom, pastilles et flèche toujours sur une seule ligne ;
+     un nom trop long passe sur deux lignes plutôt que de repousser la flèche. */
+  details.week-accordion summary.ligne-agent{flex-wrap:nowrap;}
+  .ligne-agent-nom{font-weight:600;flex:1;min-width:0;overflow-wrap:anywhere;}
+  .ligne-agent-pastilles{display:flex;gap:6px;align-items:center;flex-shrink:0;white-space:nowrap;}
   details.week-accordion .week-accordion-actions{
     display:flex;gap:6px;flex-wrap:wrap;padding:0 0 14px;
   }
@@ -612,7 +617,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.11.02g";
+const APP_VERSION = "2026.11.02h";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -3841,7 +3846,7 @@ async function renderAgentsAdmin(view){
     const enTeteFiche = contacts || bilan ? `<div class="week-sub" style="margin-bottom:10px;line-height:1.7;">${contacts}${contacts && bilan ? '<br>' : ''}${bilan}</div>` : '';
     return debutGroupe + `
     <details class="week-accordion" data-agent="${escapeHTML(a.id)}" data-categorie="${escapeHTML(a.categorie||'elu')}">
-      <summary><span style="font-weight:600;">${escapeHTML(a.nom)}</span><span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-left:auto;">${pastilles}</span></summary>
+      <summary class="ligne-agent"><span class="ligne-agent-nom">${escapeHTML(a.nom)}</span><span class="ligne-agent-pastilles">${pastilles}</span></summary>
       <div style="padding-bottom:14px;">
       ${enTeteFiche}
       ${a.categorie === 'communal' ? `
