@@ -612,7 +612,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.11.02e";
+const APP_VERSION = "2026.11.02f";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -3720,10 +3720,25 @@ async function renderDashboardAdmin(view){
 async function renderAgentsAdmin(view){
   const { data: agents, error } = await sb.from('agents').select('*').order('nom');
   if (error) { view.innerHTML = '<div class="card"><div class="empty">Erreur de chargement des agents.</div></div>'; return; }
-  const [{ data: connexions }, { data: alertes }] = await Promise.all([
+  const [{ data: connexions }, { data: alertes }, { data: plannings }] = await Promise.all([
     sb.rpc('agents_dernieres_connexions'),
-    sb.rpc('agents_alertes_push')
+    sb.rpc('agents_alertes_push'),
+    sb.from('planning').select('agent_id, semaines(statut, date_debut, date_fin)')
   ]);
+  // Astreintes publiées par agent (même règle que le tableau d'équité) :
+  // nombre sur l'année en cours, dernière effectuée, prochaine prévue.
+  const auj = toISODate(new Date()), annee = auj.slice(0, 4);
+  const astreintesById = {};
+  (plannings||[]).forEach(p => {
+    const s = p.semaines;
+    if (!s || s.statut !== 'publiee') return;
+    const st = astreintesById[p.agent_id] ||= { annee: 0, derniere: null, prochaine: null };
+    if (s.date_debut.slice(0, 4) === annee) st.annee++;
+    if (s.date_debut <= auj) { if (!st.derniere || s.date_debut > st.derniere.date_debut) st.derniere = s; }
+    else if (!st.prochaine || s.date_debut < st.prochaine.date_debut) st.prochaine = s;
+  });
+  const lienTel = t => t ? `<a href="tel:${escapeHTML(t.replace(/[^\d+]/g, ''))}">📞 ${escapeHTML(t)}</a>` : '';
+  const lienEmail = m => m ? `<a href="mailto:${escapeHTML(m)}">✉️ ${escapeHTML(m)}</a>` : '';
   const connexionById = Object.fromEntries((connexions||[]).map(c => [c.agent_id, c]));
   const alertesById = Object.fromEntries((alertes||[]).map(x => [x.agent_id, x.nb_appareils]));
 
@@ -3761,7 +3776,11 @@ async function renderAgentsAdmin(view){
         <button class="primary" id="btn-creer-acces">Créer les accès et prévenir par email</button>` : ''}
       ${sansEmail.length ? `<div class="week-sub" style="margin-top:8px;">Sans adresse email (pas d'accès possible) : ${sansEmail.map(a => escapeHTML(a.nom)).join(', ')}.</div>` : ''}
     </div>` : ''}
-    <div style="margin:0 0 16px;"><button class="primary" id="btn-ouvrir-nouvel-agent">+ Nouvel agent</button></div>
+    <div style="margin:0 0 16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <button class="primary" id="btn-ouvrir-nouvel-agent">+ Nouvel agent</button>
+      <input type="text" id="recherche-agent" placeholder="🔍 Rechercher un agent…" autocomplete="off" style="flex:1;min-width:160px;">
+    </div>
+    <div class="card hidden" id="recherche-agent-vide"><div class="empty">Aucun agent ne correspond.</div></div>
     <div class="card hidden" id="carte-nouvel-agent">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
         <h3 style="margin:0;">Nouvel agent</h3>
@@ -3795,7 +3814,7 @@ async function renderAgentsAdmin(view){
     // Nouveau groupe : on ferme la carte du précédent et on ouvre la suivante.
     const groupe = groupeAgent(a);
     const debutGroupe = groupe !== groupePrecedent
-      ? (groupePrecedent ? '</div>' : '') + `<div class="card"><h3>${TITRES_GROUPES[groupe]} (${agentsTries.filter(x => groupeAgent(x) === groupe).length})</h3>`
+      ? (groupePrecedent ? '</div>' : '') + `<div class="card" data-groupe-agents><h3>${TITRES_GROUPES[groupe]} (${agentsTries.filter(x => groupeAgent(x) === groupe).length})</h3>`
         + (groupePrecedent ? '' : '<div class="week-sub">Touchez un nom pour ouvrir sa fiche.</div>')
       : '';
     groupePrecedent = groupe;
@@ -3808,10 +3827,19 @@ async function renderAgentsAdmin(view){
         : '<span class="pill non">⚠ jamais connecté</span>') : '',
       communal && a.telephone ? `<span class="week-sub">${escapeHTML(a.telephone)}</span>` : ''
     ].filter(Boolean).join(' ');
+    // En tête de fiche : contacts cliquables + bilan des astreintes.
+    const ast = astreintesById[a.id];
+    const contacts = [lienTel(a.telephone), communal ? '' : lienEmail(a.email)].filter(Boolean).join(' &nbsp; ');
+    const bilan = communal ? '' : (a.eligible_astreinte === false && !ast) ? ''
+      : `🗓️ ${ast ? ast.annee : 0} astreinte${ast && ast.annee > 1 ? 's' : ''} en ${annee}`
+        + (ast && ast.derniere ? ` · ${ast.derniere.date_fin >= auj ? 'en cours' : 'dernière'} : semaine du ${formatDateFR(ast.derniere.date_debut)}${ast.derniere.date_debut.slice(0, 4) !== annee ? '/' + ast.derniere.date_debut.slice(0, 4) : ''}` : ' · aucune effectuée')
+        + (ast && ast.prochaine ? ` · prochaine : semaine du ${formatDateFR(ast.prochaine.date_debut)}` : '');
+    const enTeteFiche = contacts || bilan ? `<div class="week-sub" style="margin-bottom:10px;line-height:1.7;">${contacts}${contacts && bilan ? '<br>' : ''}${bilan}</div>` : '';
     return debutGroupe + `
     <details class="week-accordion" data-agent="${escapeHTML(a.id)}" data-categorie="${escapeHTML(a.categorie||'elu')}">
       <summary><span style="font-weight:600;">${escapeHTML(a.nom)}</span><span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-left:auto;">${pastilles}</span></summary>
       <div style="padding-bottom:14px;">
+      ${enTeteFiche}
       ${a.categorie === 'communal' ? `
       <div class="week-sub" style="margin-bottom:8px;">Agent communal — sans accès à l'application, référencé uniquement dans le planning des agents communaux.</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -3924,14 +3952,34 @@ async function renderAgentsAdmin(view){
   document.getElementById('btn-sauvegarde-xlsx').addEventListener('click', (e) => telechargerSauvegarde('xlsx', e.currentTarget));
   document.getElementById('btn-sauvegarde-json').addEventListener('click', (e) => telechargerSauvegarde('json', e.currentTarget));
 
+  // Recherche : filtre les lignes par nom (sans tenir compte des accents),
+  // masque les groupes vides.
+  const sansAccents = s => (s||'').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  document.getElementById('recherche-agent').addEventListener('input', (e) => {
+    const q = sansAccents(e.target.value.trim());
+    let total = 0;
+    view.querySelectorAll('[data-groupe-agents]').forEach(groupe => {
+      let visibles = 0;
+      groupe.querySelectorAll('details[data-agent]').forEach(d => {
+        const nom = (agents||[]).find(a => a.id === d.dataset.agent)?.nom;
+        const ok = !q || sansAccents(nom).includes(q);
+        d.classList.toggle('hidden', !ok);
+        if (ok) visibles++;
+      });
+      groupe.classList.toggle('hidden', !visibles);
+      total += visibles;
+    });
+    document.getElementById('recherche-agent-vide').classList.toggle('hidden', total > 0);
+  });
+
   const carteNouvel = document.getElementById('carte-nouvel-agent');
   const btnOuvrirNouvel = document.getElementById('btn-ouvrir-nouvel-agent');
   btnOuvrirNouvel.addEventListener('click', () => {
-    carteNouvel.classList.remove('hidden'); btnOuvrirNouvel.parentElement.classList.add('hidden');
+    carteNouvel.classList.remove('hidden'); btnOuvrirNouvel.classList.add('hidden');
     document.getElementById('new-agent-nom').focus();
   });
   document.getElementById('btn-fermer-nouvel-agent').addEventListener('click', () => {
-    carteNouvel.classList.add('hidden'); btnOuvrirNouvel.parentElement.classList.remove('hidden');
+    carteNouvel.classList.add('hidden'); btnOuvrirNouvel.classList.remove('hidden');
   });
 
   document.getElementById('new-agent-categorie').addEventListener('change', (e) => {
