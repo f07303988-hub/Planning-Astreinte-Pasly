@@ -612,7 +612,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.11.02d";
+const APP_VERSION = "2026.11.02e";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -3761,9 +3761,13 @@ async function renderAgentsAdmin(view){
         <button class="primary" id="btn-creer-acces">Créer les accès et prévenir par email</button>` : ''}
       ${sansEmail.length ? `<div class="week-sub" style="margin-top:8px;">Sans adresse email (pas d'accès possible) : ${sansEmail.map(a => escapeHTML(a.nom)).join(', ')}.</div>` : ''}
     </div>` : ''}
-    <div class="card">
-      <h3>Nouvel agent</h3>
-      <div class="week-sub" style="margin-bottom:10px;">Le rôle « Lecteur » donne un accès limité à la consultation du planning (pas de disponibilités à déclarer, jamais candidat aux astreintes) — utile par exemple pour le secrétariat de mairie. Un « Agent communal » n'a pas de compte de connexion : il sert uniquement à être référencé dans le planning des agents communaux.</div>
+    <div style="margin:0 0 16px;"><button class="primary" id="btn-ouvrir-nouvel-agent">+ Nouvel agent</button></div>
+    <div class="card hidden" id="carte-nouvel-agent">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+        <h3 style="margin:0;">Nouvel agent</h3>
+        <button class="ghost" id="btn-fermer-nouvel-agent">Annuler</button>
+      </div>
+      <div class="week-sub" style="margin:8px 0 10px;">Le rôle « Lecteur » donne un accès limité à la consultation du planning (pas de disponibilités à déclarer, jamais candidat aux astreintes) — utile par exemple pour le secrétariat de mairie. Un « Agent communal » n'a pas de compte de connexion : il sert uniquement à être référencé dans le planning des agents communaux.</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
         <div><div class="week-sub">Catégorie</div><select id="new-agent-categorie"><option value="elu">Élu/Secrétaire (avec accès à l'appli)</option><option value="communal">Agent communal (sans accès)</option></select></div>
         <div style="flex:1;min-width:160px;"><div class="week-sub">Nom</div><input type="text" id="new-agent-nom"></div>
@@ -3919,6 +3923,16 @@ async function renderAgentsAdmin(view){
   }
   document.getElementById('btn-sauvegarde-xlsx').addEventListener('click', (e) => telechargerSauvegarde('xlsx', e.currentTarget));
   document.getElementById('btn-sauvegarde-json').addEventListener('click', (e) => telechargerSauvegarde('json', e.currentTarget));
+
+  const carteNouvel = document.getElementById('carte-nouvel-agent');
+  const btnOuvrirNouvel = document.getElementById('btn-ouvrir-nouvel-agent');
+  btnOuvrirNouvel.addEventListener('click', () => {
+    carteNouvel.classList.remove('hidden'); btnOuvrirNouvel.parentElement.classList.add('hidden');
+    document.getElementById('new-agent-nom').focus();
+  });
+  document.getElementById('btn-fermer-nouvel-agent').addEventListener('click', () => {
+    carteNouvel.classList.add('hidden'); btnOuvrirNouvel.parentElement.classList.remove('hidden');
+  });
 
   document.getElementById('new-agent-categorie').addEventListener('change', (e) => {
     const communal = e.target.value === 'communal';
