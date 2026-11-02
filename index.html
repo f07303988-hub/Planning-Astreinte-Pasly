@@ -612,7 +612,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.11.02";
+const APP_VERSION = "2026.11.02b";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -3465,13 +3465,19 @@ function ouvrirModaleEvenement(ev, elus){
       }).eq('id', ev.id);
       if (errMaj) { mmsg.textContent = 'Erreur : ' + errMaj.message; mmsg.className = 'msg err'; return; }
 
-      // Resynchronise les participants : on retire les anciens liens puis
-      // on réinsère la sélection actuelle — plus simple et fiable qu'un
-      // diff, pour une liste de cette taille.
-      const { error: errDel } = await sb.from('evenements_agents').delete().eq('evenement_id', ev.id);
-      if (errDel) { mmsg.textContent = 'Événement mis à jour, mais erreur sur les participants : ' + errDel.message; mmsg.className = 'msg err'; return; }
-      if (participantsIds.length) {
-        const { error: errIns } = await sb.from('evenements_agents').insert(participantsIds.map(agent_id => ({ evenement_id: ev.id, agent_id })));
+      // Participants : on ne touche qu'aux personnes retirées ou ajoutées.
+      // Seules les nouvelles reçoivent la notification « Vous êtes désigné(e) »
+      // (déclencheur côté serveur) ; les autres ne sont pas renotifiées.
+      const avant = new Set(ev.agentsIds || []);
+      const apres = new Set(participantsIds);
+      const aRetirer = [...avant].filter(id => !apres.has(id));
+      const aAjouter = [...apres].filter(id => !avant.has(id));
+      if (aRetirer.length) {
+        const { error: errDel } = await sb.from('evenements_agents').delete().eq('evenement_id', ev.id).in('agent_id', aRetirer);
+        if (errDel) { mmsg.textContent = 'Événement mis à jour, mais erreur sur les participants : ' + errDel.message; mmsg.className = 'msg err'; return; }
+      }
+      if (aAjouter.length) {
+        const { error: errIns } = await sb.from('evenements_agents').insert(aAjouter.map(agent_id => ({ evenement_id: ev.id, agent_id })));
         if (errIns) { mmsg.textContent = 'Événement mis à jour, mais erreur sur les participants : ' + errIns.message; mmsg.className = 'msg err'; return; }
       }
 
