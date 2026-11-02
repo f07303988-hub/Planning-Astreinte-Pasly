@@ -612,7 +612,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.11.02b";
+const APP_VERSION = "2026.11.02c";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -3847,7 +3847,37 @@ async function renderAgentsAdmin(view){
       </div>
       <div class="msg" data-role="msg"></div>
     </div>`;
-  }).join('');
+  }).join('') + `
+    <div class="card">
+      <h3>💾 Sauvegarde des données</h3>
+      <div class="week-sub" style="margin-bottom:10px;">Une copie complète (agents, planning, disponibilités, échanges, événements…) est envoyée automatiquement par email le 1er de chaque mois. Vous pouvez aussi en télécharger une maintenant. Le fichier contient des données personnelles : à conserver en lieu sûr.</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="primary" id="btn-sauvegarde-xlsx">Télécharger (Excel)</button>
+        <button class="ghost" id="btn-sauvegarde-json">Copie exacte (JSON)</button>
+      </div>
+      <div class="msg" id="sauvegarde-msg"></div>
+    </div>`;
+
+  async function telechargerSauvegarde(format, bouton) {
+    const msg = document.getElementById('sauvegarde-msg');
+    bouton.disabled = true; msg.className = 'msg'; msg.textContent = 'Préparation de la sauvegarde…';
+    try {
+      const { data, error } = await sb.functions.invoke('sauvegarde', { body: { format } });
+      if (error || !data || !data.base64) throw error || new Error((data && data.erreur) || 'Réponse vide');
+      const octets = Uint8Array.from(atob(data.base64), c => c.charCodeAt(0));
+      const type = format === 'json' ? 'application/json' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const url = URL.createObjectURL(new Blob([octets], { type }));
+      const lien = document.createElement('a');
+      lien.href = url; lien.download = data.nom; document.body.appendChild(lien); lien.click(); lien.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      msg.className = 'msg ok'; msg.textContent = 'Sauvegarde téléchargée : ' + data.nom;
+    } catch (e) {
+      console.error(e);
+      msg.className = 'msg err'; msg.textContent = 'Échec de la sauvegarde. Vérifiez votre connexion et réessayez.';
+    } finally { bouton.disabled = false; }
+  }
+  document.getElementById('btn-sauvegarde-xlsx').addEventListener('click', (e) => telechargerSauvegarde('xlsx', e.currentTarget));
+  document.getElementById('btn-sauvegarde-json').addEventListener('click', (e) => telechargerSauvegarde('json', e.currentTarget));
 
   document.getElementById('new-agent-categorie').addEventListener('change', (e) => {
     const communal = e.target.value === 'communal';
