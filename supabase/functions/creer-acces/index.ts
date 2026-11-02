@@ -65,7 +65,7 @@ Deno.serve(async (req) => {
   let corps: { agent_id?: string; ancien_email?: string; test?: boolean } = {};
   try { corps = await req.json(); } catch { /* corps vide accepté */ }
 
-  let q = sb.from('agents').select('id, nom, email, actif, categorie').eq('actif', true).eq('categorie', 'elu').not('email', 'is', null);
+  let q = sb.from('agents').select('id, nom, email, actif, categorie').eq('actif', true).in('categorie', ['elu', 'secretariat']).not('email', 'is', null);
   if (corps.agent_id) q = q.eq('id', corps.agent_id);
   const { data: agents, error: ea } = await q;
   if (ea) return reponse({ erreur: ea.message }, 500);
