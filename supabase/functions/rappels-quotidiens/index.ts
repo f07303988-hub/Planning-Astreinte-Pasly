@@ -7,6 +7,8 @@
 //      et au remplaçant d'un jour, la veille de son remplacement ;
 //   3. aux admins, une alerte quand une semaine débute dans 15 jours ou moins
 //      sans être publiée.
+// Chaque rappel crée aussi une notification dans la cloche de l'appli, ce
+// qui déclenche l'alerte sur le téléphone (une seule fois par personne).
 // Chaque rappel n'est marqué « envoyé » que si l'envoi a réussi : en cas
 // d'échec (quota, panne), il est retenté le lendemain — uniquement pour les
 // destinataires qui ne l'ont pas encore reçu (table rappels_envoyes).
@@ -72,9 +74,11 @@ function estAppelServeur(req: Request): boolean {
   } catch { return false; }
 }
 
-// `cle` (facultative) identifie un rappel pour un destinataire précis :
-// une fois envoyé, il n'est plus jamais renvoyé à cette personne.
-type Envoi = { type: string; email: string; nom: string; sujet: string; texte: string; cle?: string };
+// `cle` identifie un rappel pour un destinataire précis : une fois envoyé,
+// il n'est plus jamais renvoyé à cette personne. `agentId` + `contexte` :
+// notification (cloche + alerte téléphone) créée en même temps que l'email.
+type Envoi = { type: string; email: string; nom: string; sujet: string; texte: string; cle?: string;
+               agentId?: string; contexte?: Record<string, unknown> };
 
 Deno.serve(async (req) => {
   if (!estAppelServeur(req)) return new Response('Accès refusé.', { status: 403 });
@@ -112,6 +116,18 @@ Deno.serve(async (req) => {
       if (e.cle && dejaRecu.has(e.cle)) continue;
       rapport.push(e);
       if (test) continue;
+      // Notification + alerte téléphone : indépendante de l'email (elle part
+      // même si Brevo échoue), et jamais deux fois pour le même rappel.
+      if (e.agentId && e.cle && !dejaRecu.has(e.cle + '|alerte')) {
+        const { error: errN } = await sb.from('notifications').insert({
+          agent_id: e.agentId, type: 'rappel', message: '⏰ ' + e.texte, contexte: e.contexte ?? null
+        });
+        if (errN) echecs.push(`notification ${e.cle} : ${errN.message}`);
+        else {
+          dejaRecu.add(e.cle + '|alerte');
+          await sb.from('rappels_envoyes').upsert({ cle: e.cle + '|alerte' }, { onConflict: 'cle', ignoreDuplicates: true });
+        }
+      }
       try { await envoyer({ email: e.email, nom: e.nom }, e.sujet, e.texte); }
       catch (err) { ok = false; echecs.push(`${e.type} → ${e.email} : ${err}`); continue; }
       if (e.cle) {
@@ -140,7 +156,8 @@ Deno.serve(async (req) => {
         .map(l => agentById[l.agent_id]).filter(a => a && a.actif && a.email)
         .map(a => ({
           type: 'evenement', email: a.email, nom: a.nom,
-          cle: `evenement|${ev.id}|${ev.date}|${a.id}`,
+          cle: `evenement|${ev.id}|${ev.date}|${a.id}`, agentId: a.id,
+          contexte: { tab: ev.publie_reponses ? 'dispos' : 'planning', evenement_id: ev.id },
           sujet: `Rappel — ${ev.intitule} ${quand}`,
           texte: `Vous êtes désigné(e) pour : ${ev.intitule}, ${quand} ${dateLongue(ev.date)}` +
             `${ev.heure ? ' à ' + ev.heure : ''}${ev.lieu ? ' (' + ev.lieu + ')' : ''}.`
@@ -160,6 +177,8 @@ Deno.serve(async (req) => {
       const a = p && agentById[p.agent_id];
       const lot = (a && a.actif && a.email) ? [{
         type: 'astreinte', email: a.email, nom: a.nom,
+        cle: `astreinte|${s.id}|${s.date_debut}|${a.id}`, agentId: a.id,
+        contexte: { tab: 'planning', semaine_id: s.id },
         sujet: 'Rappel — Votre astreinte débute bientôt',
         texte: `Votre astreinte débute le ${dateLongue(s.date_debut)} et se termine le ${dateLongue(s.date_fin)}.`
       }] : [];
@@ -176,6 +195,8 @@ Deno.serve(async (req) => {
     const quand = r.date === today ? "aujourd'hui" : 'demain';
     const lot = (a && a.actif && a.email) ? [{
       type: 'remplacement', email: a.email, nom: a.nom,
+      cle: `remplacement|${r.id}|${r.date}|${a.id}`, agentId: a.id,
+      contexte: { tab: 'planning', semaine_id: r.semaine_id },
       sujet: `Rappel — Vous êtes d'astreinte ${quand}`,
       texte: `Vous remplacez ${titulaire ? titulaire.nom : "l'agent titulaire"} pour l'astreinte de ${quand}, ${dateLongue(r.date)}.`
     }] : [];
@@ -188,7 +209,8 @@ Deno.serve(async (req) => {
   for (const s of nonPubliees ?? []) {
     const lot = admins.map(a => ({
       type: 'non_publiee', email: a.email, nom: a.nom,
-      cle: `non_publiee|${s.id}|${s.date_debut}|${a.id}`,
+      cle: `non_publiee|${s.id}|${s.date_debut}|${a.id}`, agentId: a.id,
+      contexte: { tab: 'admin-planning', semaine_id: s.id },
       sujet: 'Planning à vérifier',
       texte: `La semaine du ${dateLongue(s.date_debut)} au ${dateLongue(s.date_fin)} n'est toujours pas publiée alors qu'elle approche.`
     }));
