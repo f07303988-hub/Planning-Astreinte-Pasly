@@ -11,7 +11,7 @@
 //     interceptée, elle exige le réseau.
 // Les données gardées sont effacées à la déconnexion (message « vider-donnees »).
 
-const VERSION = '2026-10-28c';
+const VERSION = '2026-11-02';
 const CACHE_APPLI = 'appli-' + VERSION;
 const CACHE_DONNEES = 'donnees';
 const FICHIERS_APPLI = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
@@ -30,6 +30,40 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('message', (e) => {
   if (e.data === 'vider-donnees') e.waitUntil(caches.delete(CACHE_DONNEES));
+});
+
+// ---------- Alertes sur le téléphone (notifications push) ----------
+// Une alerte est TOUJOURS affichée à la réception (exigé par iPhone, qui
+// coupe sinon les alertes de l'appli).
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Pasly RH & Planning', {
+    body: d.body || 'Nouvelle notification.',
+    icon: 'icon-192.png',
+    badge: 'icon-192.png',
+    tag: d.tag || undefined,
+    data: { tab: d.tab || null, semaine_id: d.semaine_id || null }
+  }));
+});
+
+// Toucher l'alerte : ouvre l'appli (ou la ramène au premier plan) au bon onglet.
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const ctx = e.notification.data || {};
+  const url = new URL('./', self.registration.scope);
+  if (ctx.tab) url.searchParams.set('onglet', ctx.tab);
+  if (ctx.semaine_id) url.searchParams.set('semaine', ctx.semaine_id);
+  e.waitUntil((async () => {
+    const fenetres = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const f of fenetres) {
+      if (f.url.startsWith(self.registration.scope) && 'focus' in f) {
+        f.postMessage({ type: 'ouvrir-contexte', tab: ctx.tab, semaine_id: ctx.semaine_id });
+        return f.focus();
+      }
+    }
+    return self.clients.openWindow(url.href);
+  })());
 });
 
 async function reseauDabord(requete, nomCache, cleCache) {

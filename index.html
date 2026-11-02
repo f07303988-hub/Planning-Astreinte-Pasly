@@ -612,7 +612,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.10.28c";
+const APP_VERSION = "2026.11.02";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1411,6 +1411,7 @@ async function ouvrirNotifications(){
 
   const html = `
     <h3>Notifications</h3>
+    <div id="push-zone"></div>
     <div id="notif-liste">
       ${items.length === 0
         ? '<div class="empty" style="padding:14px 0;">Aucune notification.</div>'
@@ -1436,6 +1437,7 @@ async function ouvrirNotifications(){
   `;
   openModal(html);
   document.getElementById('modal-cancel').addEventListener('click', closeModal);
+  afficherZonePush();
 
   const verifierListeNotifVide = () => {
     const liste = document.getElementById('notif-liste');
@@ -1464,23 +1466,136 @@ async function ouvrirNotifications(){
       item.remove();
       verifierListeNotifVide();
       if (notif && notif.contexte && notif.contexte.tab) {
-        // Pour un admin, la notification "Semaines" (contexte enregistré
-        // côté serveur) n'affiche que Relancer/Supprimer — pas de moyen
-        // d'agir sur une disponibilité déclarée. La vue Planning, elle,
-        // propose le menu d'affectation pour la semaine concernée : on y
-        // redirige donc systématiquement, en gardant la mise en
-        // surbrillance de la semaine visée.
-        const cible = (state.isAdmin && notif.contexte.tab === 'admin-semaines' && notif.contexte.semaine_id)
-          ? 'admin-planning'
-          : notif.contexte.tab;
-        state.tab = cible;
-        if (notif.contexte.semaine_id) state.highlight = { type: 'semaine', id: notif.contexte.semaine_id };
         closeModal();
-        renderTabs(); renderView();
+        allerVersContexte(notif.contexte);
       } else {
         rafraichirBadgeNotifications();
       }
     });
+  });
+}
+
+// Ouvre l'onglet concerné par une notification (depuis la cloche ou une
+// alerte du téléphone). Pour un admin, la notification « Semaines » renvoie
+// vers Planning, qui propose le menu d'affectation de la semaine visée.
+function allerVersContexte(ctx){
+  if (!ctx || !ctx.tab || !state.agent) return;
+  state.tab = (state.isAdmin && ctx.tab === 'admin-semaines' && ctx.semaine_id) ? 'admin-planning' : ctx.tab;
+  if (ctx.semaine_id) state.highlight = { type: 'semaine', id: ctx.semaine_id };
+  state.planningVue = 'liste';
+  renderTabs(); renderView();
+}
+
+// =========================================================
+// ALERTES SUR LE TÉLÉPHONE (notifications push) — chaque notification
+// de la cloche déclenche aussi une alerte sur les téléphones où la
+// personne l'a activée (fonction serveur « envoyer-push »).
+// Sur iPhone : uniquement depuis l'appli ajoutée à l'écran d'accueil.
+// =========================================================
+function estIOS(){
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+function estInstallee(){
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+function pushPossible(){
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+function cleVersOctets(b64url){
+  const s = b64url.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(s + '='.repeat((4 - s.length % 4) % 4));
+  return Uint8Array.from(bin, c => c.charCodeAt(0));
+}
+async function abonnementPushActuel(){
+  if (!pushPossible()) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+async function activerAlertes(bouton){
+  // La demande d'autorisation doit partir directement du toucher (iPhone).
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    showToast('Autorisation refusée : les alertes ne peuvent pas être activées sur ce téléphone.', 'error');
+    afficherZonePush(); return;
+  }
+  await withLoading(bouton, 'Activation…', async () => {
+    try {
+      const { data: cle, error: errCle } = await sb.rpc('cle_publique_push');
+      if (errCle || !cle) throw new Error(errCle ? errCle.message : 'clé du serveur indisponible');
+      const reg = await navigator.serviceWorker.ready;
+      let abo = await reg.pushManager.getSubscription();
+      if (!abo) abo = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: cleVersOctets(cle) });
+      const j = abo.toJSON();
+      const { error } = await sb.rpc('enregistrer_abonnement_push', {
+        p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_appareil: navigator.userAgent
+      });
+      if (error) throw new Error(error.message);
+      showToast('Alertes activées sur ce téléphone.', 'success');
+    } catch (e) {
+      showToast('Activation impossible : ' + (e && e.message ? e.message : 'erreur inconnue'), 'error');
+    }
+  });
+  afficherZonePush();
+}
+async function desactiverAlertes(silencieux){
+  try {
+    const abo = await abonnementPushActuel();
+    if (abo) {
+      await sb.rpc('supprimer_abonnement_push', { p_endpoint: abo.endpoint });
+      await abo.unsubscribe();
+    }
+    if (!silencieux) showToast('Alertes désactivées sur ce téléphone.', 'success');
+  } catch (e) {
+    if (!silencieux) showToast('Erreur : ' + (e && e.message ? e.message : 'action impossible.'), 'error');
+  }
+}
+async function afficherZonePush(){
+  const zone = document.getElementById('push-zone');
+  if (!zone) return;
+  const cadre = (contenu) => `<div style="border:1px solid var(--stone-dark);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px;font-size:.86rem;">${contenu}</div>`;
+  if (estIOS() && !estInstallee()) {
+    zone.innerHTML = cadre(`<strong>📲 Alertes sur ce téléphone</strong><div class="week-sub" style="margin-top:4px;">Sur iPhone, ajoutez d'abord l'appli à l'écran d'accueil : bouton Partager (carré avec une flèche), puis « Sur l'écran d'accueil ». Ouvrez ensuite l'appli depuis cette icône et revenez ici.</div>`);
+    return;
+  }
+  if (!pushPossible()) {
+    zone.innerHTML = cadre(`<strong>📲 Alertes sur ce téléphone</strong><div class="week-sub" style="margin-top:4px;">Ce navigateur ne permet pas les alertes. Utilisez Chrome sur Android, ou l'appli ajoutée à l'écran d'accueil sur iPhone.</div>`);
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    zone.innerHTML = cadre(`<strong>📲 Alertes bloquées</strong><div class="week-sub" style="margin-top:4px;">Les alertes ont été refusées pour cette appli. Pour les réactiver, allez dans les réglages du téléphone (Notifications), puis revenez ici.</div>`);
+    return;
+  }
+  const abo = await abonnementPushActuel().catch(() => null);
+  if (abo && Notification.permission === 'granted') {
+    zone.innerHTML = cadre(`<strong>🔔 Alertes activées sur ce téléphone</strong>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+        <button class="ghost" id="push-tester">Envoyer une alerte de test</button>
+        <button class="ghost" id="push-desactiver">Désactiver</button>
+      </div>`);
+    document.getElementById('push-tester').addEventListener('click', async (e) => {
+      await withLoading(e.currentTarget, 'Envoi…', async () => {
+        const j = abo.toJSON();
+        await sb.rpc('enregistrer_abonnement_push', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_appareil: navigator.userAgent });
+        const { error } = await sb.rpc('tester_alerte_push');
+        showToast(error ? 'Erreur : ' + error.message : 'Alerte de test envoyée : elle doit arriver dans quelques secondes.', error ? 'error' : 'success');
+      });
+    });
+    document.getElementById('push-desactiver').addEventListener('click', async (e) => {
+      await withLoading(e.currentTarget, 'Désactivation…', () => desactiverAlertes(false));
+      afficherZonePush();
+    });
+  } else {
+    zone.innerHTML = cadre(`<strong>📲 Recevoir une alerte sur ce téléphone</strong>
+      <div class="week-sub" style="margin:4px 0 8px;">À chaque nouvelle notification (échange, remplacement, publication…), même appli fermée.</div>
+      <button class="primary" id="push-activer">Activer les alertes</button>`);
+    document.getElementById('push-activer').addEventListener('click', (e) => activerAlertes(e.currentTarget));
+  }
+}
+// Toucher une alerte alors que l'appli est déjà ouverte : le service
+// worker transmet la destination.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data && e.data.type === 'ouvrir-contexte') allerVersContexte(e.data);
   });
 }
 
@@ -1680,6 +1795,7 @@ document.getElementById('login-btn').addEventListener('click', async (e) => {
 });
 
 document.getElementById('logout-btn').addEventListener('click', async () => {
+  await desactiverAlertes(true);
   viderDonneesHorsLigne();
   await sb.auth.signOut();
   window.location.reload();
@@ -1931,6 +2047,13 @@ function showApp(){
     : (state.agent.role === 'lecteur'
         ? (['consultation','gestion'].includes(state.agent.droit_planning_agents) ? 'planning-agents' : (state.agent.peut_gerer_evenements ? 'evenements' : 'planning'))
         : 'planning');
+  // Ouverture depuis une alerte du téléphone : aller directement au bon onglet.
+  const params = new URLSearchParams(location.search);
+  if (params.get('onglet')) {
+    state.tab = params.get('onglet') === 'admin-semaines' && state.isAdmin && params.get('semaine') ? 'admin-planning' : params.get('onglet');
+    if (params.get('semaine')) state.highlight = { type: 'semaine', id: params.get('semaine') };
+    history.replaceState(null, '', location.pathname);
+  }
   renderTabs();
   renderView();
   rafraichirBadgeNotifications();
@@ -3591,8 +3714,12 @@ async function renderDashboardAdmin(view){
 async function renderAgentsAdmin(view){
   const { data: agents, error } = await sb.from('agents').select('*').order('nom');
   if (error) { view.innerHTML = '<div class="card"><div class="empty">Erreur de chargement des agents.</div></div>'; return; }
-  const { data: connexions } = await sb.rpc('agents_dernieres_connexions');
+  const [{ data: connexions }, { data: alertes }] = await Promise.all([
+    sb.rpc('agents_dernieres_connexions'),
+    sb.rpc('agents_alertes_push')
+  ]);
   const connexionById = Object.fromEntries((connexions||[]).map(c => [c.agent_id, c]));
+  const alertesById = Object.fromEntries((alertes||[]).map(x => [x.agent_id, x.nb_appareils]));
 
   const sansAcces = (agents||[]).filter(a => a.actif && (a.categorie||'elu') === 'elu' && a.email && !(connexionById[a.id] && connexionById[a.id].premiere_connexion));
   const sansEmail = (agents||[]).filter(a => a.actif && (a.categorie||'elu') === 'elu' && !a.email);
@@ -3628,8 +3755,10 @@ async function renderAgentsAdmin(view){
       <div class="week-sub" style="margin-bottom:6px;">Modifiez le nom, le téléphone, l'email, le rôle ou l'activation d'un agent. Après un changement d'email, la personne doit se reconnecter avec sa nouvelle adresse (un nouveau lien lui sera envoyé).</div>
     </div>` + (agents||[]).map(a => {
     const cnx = connexionById[a.id];
+    const nbAlertes = alertesById[a.id] || 0;
     const infoConnexion = (cnx && cnx.derniere_connexion)
       ? `Dernière connexion : ${formatDateHeureFR(cnx.derniere_connexion)} (première le ${formatDateHeureFR(cnx.premiere_connexion)})`
+        + ` · ${nbAlertes ? '🔔 alertes activées (' + nbAlertes + ' appareil' + (nbAlertes > 1 ? 's' : '') + ')' : '🔕 alertes non activées'}`
       : null;
     return `
     <div class="card" data-agent="${escapeHTML(a.id)}" data-categorie="${escapeHTML(a.categorie||'elu')}">
