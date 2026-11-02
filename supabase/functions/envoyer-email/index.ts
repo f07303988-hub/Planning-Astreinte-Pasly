@@ -2,7 +2,10 @@
 //
 // Emails déclenchés depuis l'appli (remplace EmailJS) :
 //   { action: 'publication', semaine_id }  → agent désigné de la semaine (admin)
-//   { action: 'relance',     semaine_id }  → agents éligibles n'ayant pas répondu (admin)
+//   { action: 'relance',     semaine_id }  → agents éligibles n'ayant pas répondu (admin) ;
+//                                            crée aussi une notification (cloche + alerte téléphone),
+//                                            regroupée : une seule alerte par personne en 15 minutes
+//                                            (création de plusieurs semaines d'un coup)
 //   { action: 'evenement',   evenement_id } → participants désignés (admin ou gestion événements)
 //
 // Sécurité : l'appli n'envoie que des identifiants. Destinataires et textes
@@ -36,6 +39,7 @@ function reponse(corps: unknown, status = 200) {
 function dateLongue(iso: string): string {
   return new Date(iso + 'T12:00:00Z').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
 }
+const dateCourte = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 function echapper(s: string): string {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
@@ -92,6 +96,7 @@ Deno.serve(async (req) => {
   if (!test && (!BREVO_API_KEY || !SENDER_EMAIL)) return reponse({ erreur: 'Envoi d\'emails non configuré sur le serveur.' }, 500);
 
   const messages: Message[] = [];
+  let relance: { ids: string[]; semaine: any } | null = null;
 
   if (corps.action === 'publication' || corps.action === 'relance') {
     if (!estAdmin) return reponse({ erreur: 'Réservé aux administrateurs.' }, 403);
@@ -113,9 +118,11 @@ Deno.serve(async (req) => {
         sb.from('disponibilites').select('agent_id').eq('semaine_id', s.id)
       ]);
       const ontRepondu = new Set((dispos ?? []).map(d => d.agent_id));
+      relance = { ids: [], semaine: s };
       for (const a of agents ?? []) {
         if (!a.actif || !a.email || a.role === 'lecteur' || a.eligible_astreinte === false || a.categorie === 'communal') continue;
         if (ontRepondu.has(a.id)) continue;
+        relance.ids.push(a.id);
         messages.push({ email: a.email, nom: a.nom, sujet: 'Rappel — Déclarez votre disponibilité',
           texte: `Merci de déclarer votre disponibilité pour la semaine ${periode}, avant le ${dateLongue(s.date_limite_dispo)}.` });
       }
@@ -138,6 +145,25 @@ Deno.serve(async (req) => {
   }
 
   if (test) return reponse({ test: true, envoyes: 0, prevus: messages.map(m => ({ a: m.nom, sujet: m.sujet })) });
+
+  // Relance : notification (cloche + alerte téléphone), sauf si la personne
+  // en a déjà reçu une non lue il y a moins de 15 minutes.
+  if (relance && relance.ids.length) {
+    const il15min = new Date(Date.now() - 15 * 60000).toISOString();
+    const { data: recentes } = await sb.from('notifications').select('agent_id')
+      .eq('type', 'disponibilite_demandee').eq('lue', false).gte('created_at', il15min).in('agent_id', relance.ids);
+    const dejaPrevenus = new Set((recentes ?? []).map(n => n.agent_id));
+    const s = relance.semaine;
+    const lignes = relance.ids.filter(id => !dejaPrevenus.has(id)).map(id => ({
+      agent_id: id, type: 'disponibilite_demandee',
+      message: `🗓️ Disponibilité à déclarer : semaine du ${dateCourte(s.date_debut)} au ${dateCourte(s.date_fin)}, avant le ${dateCourte(s.date_limite_dispo)}.`,
+      contexte: { tab: 'dispos', semaine_id: s.id }
+    }));
+    if (lignes.length) {
+      const { error } = await sb.from('notifications').insert(lignes);
+      if (error) console.error('Notifications de relance non créées', error);
+    }
+  }
 
   let envoyes = 0; const echecs: string[] = [];
   for (const m of messages) {
