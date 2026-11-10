@@ -1,0 +1,22 @@
+-- Relais d'envoi de la sauvegarde de l'application « Bâtiments communaux »
+-- (projet Supabase « mairie-pasly »), qui n'a pas de service d'envoi d'emails.
+-- Voir supabase/functions/relais-sauvegarde.
+--
+-- L'accès au relais est enregistré dans la table acces_externes, sous le nom
+-- « relais_sauvegarde_batiments ». La colonne « jeton » y contient l'EMPREINTE
+-- SHA-256 du jeton, pas le jeton lui-même : celui-ci n'existe que dans la base
+-- « mairie-pasly » (table cles_serveur, clé « relais_sauvegarde »).
+--
+-- Pour renouveler l'accès (jeton compromis, reconstruction d'un projet) :
+--   1. dans « mairie-pasly » :
+--        update public.cles_serveur
+--        set valeur = jsonb_set(valeur, '{v}', to_jsonb(encode(extensions.gen_random_bytes(32), 'hex')))
+--        where cle = 'relais_sauvegarde'
+--        returning encode(extensions.digest(valeur->>'v', 'sha256'), 'hex') as empreinte;
+--   2. ici, avec l'empreinte obtenue :
+--        insert into public.acces_externes (nom, jeton)
+--        values ('relais_sauvegarde_batiments', '<empreinte>')
+--        on conflict (nom) do update set jeton = excluded.jeton;
+--
+-- Aucune modification de structure : ce fichier ne fait que documenter l'accès.
+select 1;
