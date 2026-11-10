@@ -91,6 +91,26 @@
     font-family:inherit;
   }
   header.top button:hover{background:rgba(237,231,217,.12);}
+  /* Menu du compte : le nom ouvre un petit menu (Agenda, Mot de passe,
+     Déconnexion) au lieu de trois boutons qui occupaient deux lignes
+     de l'en-tête sur téléphone. */
+  .who-menu-wrap{position:relative;min-width:0;}
+  header.top .who-btn{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:7px 12px;font-size:.85rem;}
+  #who-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .who-chevron{font-size:.7rem;opacity:.8;}
+  .who-menu{
+    position:absolute;top:calc(100% + 6px);left:0;z-index:960;
+    min-width:210px;max-width:calc(100vw - 40px);
+    background:var(--white);border:1px solid var(--stone-dark);border-radius:var(--radius);
+    box-shadow:0 8px 24px rgba(27,42,65,.22);
+    padding:4px;display:flex;flex-direction:column;
+  }
+  header.top .who-menu button{
+    border:none;color:var(--ink);text-align:left;width:100%;
+    padding:11px 12px;font-size:.9rem;
+  }
+  header.top .who-menu button:hover{background:var(--stone);}
+  header.top .who-menu button + button{border-top:1px solid var(--stone);}
 
   main{
     max-width:760px;
@@ -104,12 +124,29 @@
     margin-bottom:22px;
     border-bottom:1px solid var(--stone-dark);
     overflow-x:auto;
+    position:relative;
+    scrollbar-width:none;
+    /* Fondu à droite tant qu'il reste des onglets hors écran. */
+    --fondu-g:0px; --fondu-d:34px;
+    -webkit-mask-image:linear-gradient(to right, transparent, #000 var(--fondu-g), #000 calc(100% - var(--fondu-d)), transparent);
+    mask-image:linear-gradient(to right, transparent, #000 var(--fondu-g), #000 calc(100% - var(--fondu-d)), transparent);
   }
+  nav.tabs::-webkit-scrollbar{display:none;}
+  nav.tabs.au-bout{--fondu-d:0px;}
+  nav.tabs.entame{--fondu-g:34px;}
+  nav.tabs.avec-sous-onglets{margin-bottom:10px;}
+  /* Sous-onglets de « Gestion » (Semaines, Échanges, Agents). */
+  nav.subtabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;}
+  nav.subtabs button{
+    background:none;border:1px solid var(--stone-dark);border-radius:999px;
+    padding:6px 14px;font-family:inherit;font-size:.84rem;color:#6b6456;cursor:pointer;
+  }
+  nav.subtabs button.active{background:var(--navy);border-color:var(--navy);color:var(--stone);}
   nav.tabs button{
     background:none;
     border:none;
     padding:10px 4px;
-    margin-right:22px;
+    margin-right:18px;
     font-family:'IBM Plex Sans', sans-serif;
     font-size:.92rem;
     font-weight:500;
@@ -141,6 +178,16 @@
     flex-wrap:wrap;
   }
   .week-row:last-child{border-bottom:none;}
+  /* Les blocs d'une ligne ne dépassent jamais la carte : sans cela, une
+     liste déroulante au libellé long élargissait son bloc au-delà du bord. */
+  .week-row > div{min-width:0;max-width:100%;}
+  /* Ligne compacte (semaine déjà publiée) : tout sur une ligne, le bouton à droite. */
+  .week-row.compacte{flex-wrap:nowrap;align-items:flex-start;padding:11px 0;}
+  .week-row.compacte > div{flex:1;}
+  .week-row.compacte button.ghost{flex-shrink:0;padding:6px 12px;font-size:.8rem;}
+  .week-titulaire{color:var(--ink);font-size:.9rem;font-weight:500;}
+  .week-etat{color:#8a8272;font-size:.78rem;font-weight:400;white-space:nowrap;}
+  a[href^="tel:"], a[href^="mailto:"]{color:var(--navy);text-decoration:underline;text-decoration-color:var(--stone-dark);text-underline-offset:3px;}
   .week-label{font-weight:500;}
   .week-sub{font-size:.78rem;color:#8a8272;margin-top:2px;}
 
@@ -285,7 +332,7 @@
   }
   table.balance th{color:#8a8272;font-weight:500;font-size:.76rem;}
 
-  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;}
   .cal-head{font-size:.62rem;font-weight:600;color:#8a8272;text-align:center;padding:2px 0 6px;text-transform:uppercase;letter-spacing:.02em;}
   .cal-cell{min-height:48px;border:1px solid var(--stone-dark);border-radius:var(--radius);padding:3px 2px;font-size:.7rem;background:var(--white);display:flex;flex-direction:column;align-items:center;overflow:hidden;}
   .cal-cell.cal-empty{border-color:transparent;background:transparent;}
@@ -354,6 +401,10 @@
     text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     margin-top:1px;padding:0 1px;
   }
+  /* Nom trop long pour la case : il peut déborder sur la case suivante de la
+     même semaine quand elle n'affiche pas de nom (voir ajusterNomsCalendrier). */
+  .cal-cell.cal-deborde{overflow:visible;}
+  .cal-cell.cal-deborde .cal-nom{overflow:visible;text-overflow:clip;text-align:left;padding-left:3px;position:relative;z-index:2;}
   /* Événements : une pastille de couleur par élément (détail au toucher). */
   .cal-dots{display:flex;flex-wrap:wrap;justify-content:center;gap:2px;margin-top:auto;padding-top:2px;}
   .cal-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 1px rgba(255,255,255,.8);}
@@ -555,7 +606,7 @@
 
   .print-only{display:none;}
   @media print {
-    header.top, nav.tabs, #toast-wrap, #modal-backdrop, button, select, input, .msg, .no-print { display:none !important; }
+    header.top, nav.tabs, nav.subtabs, #toast-wrap, #modal-backdrop, button, select, input, .msg, .no-print { display:none !important; }
     .print-only{display:inline !important;}
     main{padding:0;max-width:100%;}
     .card{border:none;box-shadow:none;page-break-inside:avoid;}
@@ -591,16 +642,21 @@
   <header class="top">
     <div class="brand">Pasly RH &amp; Planning<span>Commune de Pasly</span></div>
     <div class="who">
-      <span id="who-name"></span>
+      <div class="who-menu-wrap">
+        <button id="who-btn" class="who-btn" aria-haspopup="true" aria-expanded="false" aria-controls="who-menu"><span id="who-name"></span><span class="who-chevron" aria-hidden="true">▾</span></button>
+        <div id="who-menu" class="who-menu hidden" role="menu">
+          <button id="agenda-btn" role="menuitem" title="Recevoir mes astreintes dans l'agenda de mon téléphone">📅 Mes astreintes dans mon agenda</button>
+          <button id="set-password-btn" role="menuitem">Mot de passe</button>
+          <button id="logout-btn" role="menuitem">Déconnexion</button>
+        </div>
+      </div>
       <button id="notif-btn" class="notif-btn hidden" aria-label="Notifications">🔔<span id="notif-badge" class="notif-badge hidden">0</span></button>
-      <button id="agenda-btn" title="Recevoir mes astreintes dans l'agenda de mon téléphone">📅 Agenda</button>
-      <button id="set-password-btn">Mot de passe</button>
-      <button id="logout-btn">Déconnexion</button>
     </div>
   </header>
 
   <main>
     <nav class="tabs" id="tabs"></nav>
+    <nav class="subtabs hidden" id="subtabs" aria-label="Gestion"></nav>
     <div id="view"></div>
     <footer class="app-credit">Développé par François Liéveaux</footer>
   </main>
@@ -624,7 +680,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.11.10";
+const APP_VERSION = "2026.11.10b";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -688,6 +744,32 @@ function escapeHTML(str){
     '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
   }[c]));
 }
+
+// Accorde un libellé au nombre : accord(1, 'semaine(s) publiée(s)') donne
+// « semaine publiée », accord(3, …) « semaines publiées ».
+function accord(n, texte){
+  return texte.replace(/\((s|nt)\)/g, Number(n) > 1 ? '$1' : '');
+}
+// Libellé affiché d'un statut de semaine (la base les stocke sans accent).
+function statutSemaineLabel(statut){
+  return ({ ouverte: 'ouverte', figee: 'figée', publiee: 'publiée' })[statut] || statut;
+}
+
+// Menu du compte (en-tête) : ouverture au clic sur le nom, fermeture au clic
+// ailleurs, sur Échap, ou après le choix d'une entrée.
+(function(){
+  const btn = document.getElementById('who-btn'), menu = document.getElementById('who-menu');
+  function fermer(){ menu.classList.add('hidden'); btn.setAttribute('aria-expanded', 'false'); }
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const ouvrir = menu.classList.contains('hidden');
+    menu.classList.toggle('hidden', !ouvrir);
+    btn.setAttribute('aria-expanded', ouvrir ? 'true' : 'false');
+  });
+  menu.addEventListener('click', fermer);
+  document.addEventListener('click', (e) => { if (!menu.contains(e.target)) fermer(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fermer(); });
+})();
 
 // Même format que la contrainte CHECK côté base (agents_email_format_check) :
 // un retour immédiat à la saisie, la base restant l'autorité finale.
@@ -1020,7 +1102,7 @@ function astreinteActuelleHTML(semainesToutes, planByWeek, agentById, meId, remp
       <div class="week-sub" style="margin-bottom:8px;">${escapeHTML(weekLabel(semaine))}</div>
       ${agent
         ? `<div class="week-label" style="font-size:1.05rem;">${escapeHTML(agent.nom)} ${mine ? '<span class="pill publiee">Vous</span>' : ''}</div>
-           <div class="week-sub">${escapeHTML(agent.telephone || '')}</div>
+           ${agent.telephone ? `<div class="week-sub">📞 <a href="tel:${escapeHTML(agent.telephone.replace(/[^\d+]/g, ''))}">${escapeHTML(agent.telephone)}</a></div>` : ''}
            ${remplacant ? `<div class="week-sub" style="color:var(--tuile);margin-top:4px;">Remplacement ponctuel aujourd'hui (titulaire habituel : ${escapeHTML(titulaire ? titulaire.nom : '—')})</div>` : ''}`
         : '<div class="empty" style="padding:6px 0;">Non assigné</div>'}
     </div>`;
@@ -1067,6 +1149,23 @@ function renderMonthCalendarHTML(semainesPubliees, planByWeek, agentById, meId, 
     return (agent.nom || '').split(' ')[0];
   }
 
+  // Couleur de chaque agent dans CE mois : sa couleur habituelle, sauf si un
+  // autre agent du mois l'a déjà (la palette compte moins de couleurs que
+  // d'agents) — il reçoit alors la première couleur encore libre.
+  const couleursMois = {};
+  const couleursPrises = new Set();
+  function couleurDansMois(agent){
+    if (!agent) return null;
+    if (couleursMois[agent.id]) return couleursMois[agent.id];
+    let c = couleurAgent(agent, agentById, meId);
+    if (!(meId && agent.id === meId) && couleursPrises.has(c[0])) {
+      c = PALETTE_AGENTS.find(x => !couleursPrises.has(x[0])) || c;
+    }
+    couleursPrises.add(c[0]);
+    couleursMois[agent.id] = c;
+    return c;
+  }
+
   let cellsHTML = joursLabels.map(j => `<div class="cal-head">${j}</div>`).join('');
   for (let i = 0; i < startDay; i++) cellsHTML += `<div class="cal-cell cal-empty"></div>`;
   const joursData = {};
@@ -1100,7 +1199,7 @@ function renderMonthCalendarHTML(semainesPubliees, planByWeek, agentById, meId, 
     const pVeille = sVeille ? planByWeek[sVeille.id] : null;
     const agentVeille = (remplacantsParDate && remplacantsParDate[isoVeille]) || (pVeille ? agentById[pVeille.agent_id] : null);
     const afficherNom = agent && (d === 1 || isoJourSemaine(date) === 1 || !agentVeille || agentVeille.id !== agent.id);
-    const couleur = couleurAgent(agent, agentById, meId);
+    const couleur = couleurDansMois(agent);
     const style = couleur ? `background:${couleur[0]};color:${couleur[1]};` : '';
     const nomAffiche = agent ? (mine ? 'Vous' : nomCourt(agent)) + (remplacant ? '*' : '') : '';
     const aujourdhui = iso === toISODate(new Date());
@@ -1131,7 +1230,7 @@ function renderMonthCalendarHTML(semainesPubliees, planByWeek, agentById, meId, 
       ${semainesDuMois.map(s => {
         const p = planByWeek[s.id];
         const agent = p ? agentById[p.agent_id] : null;
-        const c = couleurAgent(agent, agentById, meId);
+        const c = couleurDansMois(agent);
         return `<span><i style="background:${c ? c[0] : '#CFDED2'};border:1px solid ${c ? c[1] : '#CFDED2'};"></i>${escapeHTML(weekLabel(s))} — ${agent ? escapeHTML(agent.nom) : 'non assigné'}</span>`;
       }).join('')}
       ${Object.keys(remplacantsParDate||{}).some(iso => iso >= moisDebut && iso <= moisFin) ? '<span style="opacity:.7;">* remplacement ponctuel ce jour-là</span>' : ''}
@@ -1157,7 +1256,22 @@ function renderMonthCalendarHTML(semainesPubliees, planByWeek, agentById, meId, 
     </div>`;
 }
 
+// Un nom trop long pour sa case déborde sur la case suivante quand celle-ci
+// est sur la même ligne et n'affiche pas elle-même de nom ; sinon il reste
+// tronqué (« … »). Mesuré après affichage, donc adapté à chaque écran.
+function ajusterNomsCalendrier(view){
+  const cellules = Array.from(view.querySelectorAll('.cal-grid > .cal-cell'));
+  cellules.forEach((cell, i) => {
+    const nom = cell.querySelector('.cal-nom');
+    if (!nom || nom.scrollWidth <= nom.clientWidth + 1) return;
+    const suivante = cellules[i + 1];
+    if ((i % 7) === 6 || !suivante || suivante.classList.contains('cal-empty') || suivante.querySelector('.cal-nom')) return;
+    cell.classList.add('cal-deborde');
+  });
+}
+
 function brancherNavigationCalendrier(view){
+  ajusterNomsCalendrier(view);
   const prev = document.getElementById('cal-prev');
   const next = document.getElementById('cal-next');
   const today = document.getElementById('cal-today');
@@ -1693,7 +1807,7 @@ async function ouvrirQuiEstDisponible(){
               <strong>${icone} ${escapeHTML(l.agent.nom)}</strong>
               <div class="week-sub">${escapeHTML(statutLabel)}${prioriteLabel ? ' · ' + escapeHTML(prioriteLabel) : ''}</div>
               ${l.agent.telephone ? `<div class="week-sub">📞 <a href="tel:${escapeHTML(telHref)}">${escapeHTML(l.agent.telephone)}</a></div>` : ''}
-              <div class="week-sub" style="opacity:.75;">${nb} astreinte(s) déjà effectuée(s)</div>
+              <div class="week-sub" style="opacity:.75;">${nb} ${accord(nb, 'astreinte(s) déjà effectuée(s)')}</div>
             </div>
           </div>`;
         }).join('');
@@ -1773,10 +1887,10 @@ function afficherResultatRelance(resultats){
   if (totalEnvoyes === 0 && totalEchecs === 0) {
     showToast('Tous les agents ont déjà répondu' + (resultats.length > 1 ? ' pour toutes les semaines ouvertes.' : '.'), 'success');
   } else if (totalEnvoyes === 0 && totalEchecs > 0) {
-    showToast('Aucun email n\'a pu être envoyé (' + totalEchecs + ' échec(s)). Réessayez plus tard.', 'error');
+    showToast('Aucun email n\'a pu être envoyé (' + totalEchecs + ' ' + accord(totalEchecs, 'échec(s)') + '). Réessayez plus tard.', 'error');
   } else {
-    const suffixe = resultats.length > 1 ? ` (${resultats.length} semaine(s))` : '';
-    showToast(totalEnvoyes + ' rappel(s) envoyé(s)' + (totalEchecs ? ', ' + totalEchecs + ' échec(s)' : '') + suffixe + '.', totalEchecs ? 'error' : 'success');
+    const suffixe = resultats.length > 1 ? ` (${resultats.length} semaines)` : '';
+    showToast(totalEnvoyes + ' ' + accord(totalEnvoyes, 'rappel(s) envoyé(s)') + (totalEchecs ? ', ' + totalEchecs + ' ' + accord(totalEchecs, 'échec(s)') : '') + suffixe + '.', totalEchecs ? 'error' : 'success');
   }
 }
 
@@ -2077,20 +2191,55 @@ function renderTabs(){
   const gerePlanningAgents = state.isAdmin || ['consultation','gestion'].includes(state.agent.droit_planning_agents);
   const ongletPlanningAgents = ['planning-agents','👷 Planning agents communaux'];
   const tabs = state.isAdmin
-    ? [['dashboard','📊 Tableau de bord'],['dispos','Mes disponibilités'],['admin-planning','Planning'],['admin-semaines','Semaines'],['admin-echanges','Échanges'],['evenements','Événements'],...(gerePlanningAgents ? [ongletPlanningAgents] : []),['admin-agents','Agents']]
+    ? [['dashboard','📊 Tableau de bord'],['dispos','Mes disponibilités'],['admin-planning','Planning'],['evenements','Événements'],...(gerePlanningAgents ? [ongletPlanningAgents] : []),['gestion','Gestion']]
     : state.agent.role === 'lecteur'
       ? [...(gerePlanningAgents ? [ongletPlanningAgents] : []), ...(gereEvenements ? [['evenements','Événements']] : []), ['planning','Planning']]
       : [['dispos','Mes disponibilités'],['planning','Planning'],['echanges','Échanges'], ...(gereEvenements ? [['evenements','Événements']] : []), ...(gerePlanningAgents ? [ongletPlanningAgents] : [])];
+  // Administrateur : les écrans de gestion (Semaines, Échanges, Agents) sont
+  // regroupés derrière l'onglet « Gestion », avec une rangée de sous-onglets.
+  // state.tab garde l'identifiant de l'écran réel (admin-semaines…), si bien
+  // que les raccourcis du tableau de bord et des notifications restent valables.
+  const sousOngletsGestion = [['admin-semaines','Semaines'],['admin-echanges','Échanges'],['admin-agents','Agents']];
+  const dansGestion = state.isAdmin && sousOngletsGestion.some(([id]) => id === state.tab);
+  if (dansGestion) state.ongletGestion = state.tab;
+  const aller = (id) => { state.tab = id; state.semainesFiltre = null; state.echangesFiltre = null; renderTabs(); renderView(); };
+
   const nav = document.getElementById('tabs');
   nav.innerHTML = '';
   tabs.forEach(([id,label]) => {
     const b = document.createElement('button');
     b.textContent = label;
-    b.className = state.tab === id ? 'active' : '';
-    b.addEventListener('click', () => { state.tab = id; state.semainesFiltre = null; state.echangesFiltre = null; renderTabs(); renderView(); });
+    const actif = id === 'gestion' ? dansGestion : state.tab === id;
+    b.className = actif ? 'active' : '';
+    b.addEventListener('click', () => aller(id === 'gestion' ? (state.ongletGestion || 'admin-semaines') : id));
     nav.appendChild(b);
   });
+  nav.classList.toggle('avec-sous-onglets', dansGestion);
+
+  const sousNav = document.getElementById('subtabs');
+  sousNav.innerHTML = '';
+  sousNav.classList.toggle('hidden', !dansGestion);
+  if (dansGestion) sousOngletsGestion.forEach(([id,label]) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.className = state.tab === id ? 'active' : '';
+    b.addEventListener('click', () => aller(id));
+    sousNav.appendChild(b);
+  });
+
+  // L'onglet actif est amené dans la partie visible de la barre (sans faire
+  // défiler la page), et le fondu de droite disparaît en bout de barre.
+  const boutonActif = nav.querySelector('button.active');
+  if (boutonActif) nav.scrollLeft = Math.max(0, boutonActif.offsetLeft - (nav.clientWidth - boutonActif.offsetWidth) / 2);
+  majFonduOnglets();
 }
+function majFonduOnglets(){
+  const nav = document.getElementById('tabs');
+  nav.classList.toggle('au-bout', nav.scrollLeft + nav.clientWidth >= nav.scrollWidth - 4);
+  nav.classList.toggle('entame', nav.scrollLeft > 4);
+}
+document.getElementById('tabs').addEventListener('scroll', majFonduOnglets, { passive: true });
+window.addEventListener('resize', majFonduOnglets);
 
 // Les affichages sont exécutés l'un après l'autre, jamais en même temps :
 // sinon, en changeant d'onglet pendant un chargement, l'onglet précédent
@@ -2353,7 +2502,7 @@ async function renderDispos(view){
         );
         if (!errDispo) marquees++;
       }
-      showToast('Période ajoutée' + (marquees ? ' — ' + marquees + ' semaine(s) marquée(s) ' + (disponible ? 'disponible(s)' : 'indisponible(s)') + '.' : '.'), 'success');
+      showToast('Période ajoutée' + (marquees ? ' — ' + marquees + ' ' + accord(marquees, 'semaine(s) marquée(s) ' + (disponible ? 'disponible(s)' : 'indisponible(s)')) + '.' : '.'), 'success');
       renderView();
     });
   });
@@ -2630,7 +2779,7 @@ async function renderEchangesAgent(view){
         const messages = { accepter: 'Échange accepté.', refuser: 'Échange refusé.', annuler: 'Demande annulée.' };
         let msg = messages[btn.dataset.role];
         if (btn.dataset.role === 'accepter' && data && data.remplacements_annules > 0) {
-          msg += ` Attention : ${data.remplacements_annules} remplacement(s) ponctuel(s) prévu(s) sur cette semaine ont été annulé(s) (à renégocier si besoin).`;
+          msg += ` Attention : ${data.remplacements_annules} ${accord(data.remplacements_annules, 'remplacement(s) ponctuel(s) prévu(s)')} sur cette semaine ${data.remplacements_annules > 1 ? 'ont été annulés' : 'a été annulé'} (à renégocier si besoin).`;
         }
         showToast(msg, 'success');
         renderView();
@@ -2734,7 +2883,7 @@ async function renderPlanningAdmin(view){
       (optionsAutres ? `<optgroup label="Autres agents éligibles">${optionsAutres}</optgroup>` : '');
     const proche = s.date_debut <= seuilProche && s.date_debut >= today;
     let alerte = '';
-    if (candidats.length === 0) alerte = '<div class="warn-text">Aucun agent ne s\'est déclaré disponible — vous pouvez tout de même en affecter un manuellement ci-dessous</div>';
+    if (candidats.length === 0 && s.statut !== 'publiee') alerte = '<div class="warn-text">Aucun agent ne s\'est déclaré disponible — vous pouvez tout de même en affecter un manuellement ci-dessous</div>';
     else if (!p && proche && s.statut !== 'publiee') alerte = '<div class="warn-text">⚠ Astreinte dans moins de 7 jours, personne assigné pour l\'instant</div>';
     const evenementsSemaine = Object.entries(evenementsParDate||{})
       .filter(([iso]) => iso >= s.date_debut && iso <= s.date_fin)
@@ -2743,21 +2892,33 @@ async function renderPlanningAdmin(view){
       ? `<div class="week-sub" style="color:var(--navy);margin-top:2px;font-style:italic;">` +
         evenementsSemaine.map(ev => `${escapeHTML(ev.intitule)} le ${escapeHTML(formatDateFR(ev.iso))}${ev.agents.length ? ' : ' + ev.agents.map(escapeHTML).join(', ') : ''}`).join(' · ') +
         `</div>` : '';
+    // Semaine déjà publiée : ligne compacte (le titulaire en clair, plus de
+    // liste déroulante grisée). Le rappel n'a de sens que tant qu'elle n'est pas finie.
+    if (s.statut === 'publiee') {
+      return `
+      <div class="week-row compacte" data-semaine-row="${escapeHTML(s.id)}">
+        <div>
+          <div class="week-label">${escapeHTML(weekLabel(s))}</div>
+          <div class="week-titulaire">${agentAssigne ? escapeHTML(agentAssigne.nom) : '(non assigné)'} <span class="week-etat">· ${escapeHTML(statutSemaineLabel(s.statut))}</span></div>
+          ${evenementsHTML}
+        </div>
+        ${s.date_fin >= today ? `<button class="ghost" data-role="rappel" data-semaine="${escapeHTML(s.id)}" title="Renvoyer l'email de désignation à l'agent">Rappel</button>` : ''}
+      </div>`;
+    }
     return `
       <div class="week-row" data-semaine-row="${escapeHTML(s.id)}">
         <div>
-          <div class="week-label">${escapeHTML(weekLabel(s))} <span class="pill ${s.statut==='publiee'?'publiee':'partiel'}">${escapeHTML(s.statut)}</span></div>
-          ${alerte || `<div class="week-sub">${candidats.length} agent(s) dispo</div>`}
+          <div class="week-label">${escapeHTML(weekLabel(s))} <span class="pill partiel">${escapeHTML(statutSemaineLabel(s.statut))}</span></div>
+          ${alerte || `<div class="week-sub">${candidats.length} ${accord(candidats.length, 'agent(s) disponible(s)')}</div>`}
           ${evenementsHTML}
           <span class="print-only">${agentAssigne ? escapeHTML(agentAssigne.nom) : '(non assigné)'}</span>
         </div>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-          <select data-role="assign" data-semaine="${escapeHTML(s.id)}" ${s.statut==='publiee' || eligibles.length===0 ?'disabled':''}>
+          <select data-role="assign" data-semaine="${escapeHTML(s.id)}" ${eligibles.length===0 ?'disabled':''}>
             <option value="">— choisir —</option>
             ${options}
           </select>
-          ${s.statut !== 'publiee' ? `<button class="ghost" data-role="publier" data-semaine="${escapeHTML(s.id)}">Publier</button>` : ''}
-          ${s.statut === 'publiee' ? `<button class="ghost" data-role="rappel" data-semaine="${escapeHTML(s.id)}">Renvoyer un rappel</button>` : ''}
+          <button class="ghost" data-role="publier" data-semaine="${escapeHTML(s.id)}">Publier</button>
         </div>
       </div>`;
   }
@@ -2768,16 +2929,19 @@ async function renderPlanningAdmin(view){
         <h3 style="margin-bottom:2px;">Générer une proposition</h3>
         <div class="week-sub">Répartit équitablement les semaines non encore assignées, selon les disponibilités déclarées et en évitant si possible deux semaines consécutives pour la même personne. Cela reste une proposition à vérifier avant publication.</div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="ghost" id="btn-toggle-vue">Vue calendrier</button>
-        <button class="ghost" id="btn-imprimer">Imprimer / PDF</button>
-        <button class="primary" id="btn-generer">Générer une proposition</button>
-      </div>
+      <button class="primary" id="btn-generer">Générer une proposition</button>
     </div>
-    <div class="card">` + semaines.map(ligneSemaine).join('') + `</div>` +
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+        <h3 style="margin:0;">Semaines à venir</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="ghost" id="btn-toggle-vue">Vue calendrier</button>
+          <button class="ghost" id="btn-imprimer">Imprimer / PDF</button>
+        </div>
+      </div>` + semaines.map(ligneSemaine).join('') + `</div>` +
     (passees.length ? `
     <div class="card">
-      <button class="ghost" id="btn-toggle-historique">${state.showHistoriqueAdmin ? 'Masquer l\'historique' : 'Afficher l\'historique (' + passees.length + ' semaine(s) passée(s))'}</button>
+      <button class="ghost" id="btn-toggle-historique">${state.showHistoriqueAdmin ? 'Masquer l\'historique' : 'Afficher l\'historique (' + passees.length + ' ' + accord(passees.length, 'semaine(s) passée(s)') + ')'}</button>
       ${state.showHistoriqueAdmin ? passees.map(ligneSemaine).join('') : ''}
     </div>` : '');
 
@@ -2793,8 +2957,8 @@ async function renderPlanningAdmin(view){
       // impossible d'obtenir un lot partiellement généré en cas de coupure réseau.
       const { data, error } = await sb.rpc('generer_proposition_planning');
       if (error) { showToast('Erreur : ' + error.message, 'error'); return; }
-      if (data.sans_candidat > 0) showToast(data.sans_candidat + ' semaine(s) sans aucun agent disponible.', 'error');
-      if (data.crees > 0) showToast(data.crees + ' semaine(s) générée(s). Vérifiez puis publiez.', 'success');
+      if (data.sans_candidat > 0) showToast(data.sans_candidat + ' ' + accord(data.sans_candidat, 'semaine(s)') + ' sans aucun agent disponible.', 'error');
+      if (data.crees > 0) showToast(data.crees + ' ' + accord(data.crees, 'semaine(s) générée(s)') + '. Vérifiez puis publiez.', 'success');
       else if (data.sans_candidat === 0) showToast('Aucune semaine à générer.', 'success');
       renderView();
     });
@@ -2949,7 +3113,7 @@ async function renderSemainesAdmin(view){
     <div class="card">` + (semainesAffichees.length ? semainesAffichees.map(ligneSemaineAdmin).join('') : '<div class="empty">Aucune semaine ne correspond.</div>') +
     (passees.length ? `
       <div style="padding:10px 0;">
-        <button class="ghost" id="btn-toggle-historique-semaines">${state.showHistoriqueSemaines ? 'Masquer l\'historique' : 'Afficher l\'historique (' + passees.length + ' semaine(s) passée(s))'}</button>
+        <button class="ghost" id="btn-toggle-historique-semaines">${state.showHistoriqueSemaines ? 'Masquer l\'historique' : 'Afficher l\'historique (' + passees.length + ' ' + accord(passees.length, 'semaine(s) passée(s)') + ')'}</button>
       </div>
       ${state.showHistoriqueSemaines ? passees.map(ligneSemaineAdmin).join('') : ''}
     ` : '') + `</div>`;
@@ -2966,7 +3130,7 @@ async function renderSemainesAdmin(view){
       <details class="week-accordion">
         <summary>
           <div>
-            <div class="week-label">${escapeHTML(weekLabel(s))} <span class="pill ${s.statut==='publiee'?'publiee':'partiel'}">${escapeHTML(s.statut)}</span></div>
+            <div class="week-label">${escapeHTML(weekLabel(s))} <span class="pill ${s.statut==='publiee'?'publiee':'partiel'}">${escapeHTML(statutSemaineLabel(s.statut))}</span></div>
             ${s.statut === 'ouverte' ? `<div class="week-sub ${urgence}">Limite dispo : ${escapeHTML(formatDateFR(s.date_limite_dispo))}</div>` : ''}
           </div>
         </summary>
@@ -3018,7 +3182,7 @@ async function renderSemainesAdmin(view){
       // personne n'ayant encore répondu, elle part à tout le monde).
       if (creee) {
         const resultat = await relancerNonRepondants(creee);
-        showToast('Semaine créée. ' + (resultat && resultat.envoyes ? resultat.envoyes + ' email(s) envoyé(s).' : ''), 'success');
+        showToast('Semaine créée. ' + (resultat && resultat.envoyes ? resultat.envoyes + ' ' + accord(resultat.envoyes, 'email(s) envoyé(s)') + '.' : ''), 'success');
       } else {
         showToast('Semaine créée.', 'success');
       }
@@ -3083,10 +3247,10 @@ async function renderSemainesAdmin(view){
         const resultat = await relancerNonRepondants(sem);
         totalEmails += (resultat && resultat.envoyes) || 0;
       }
-      let resume = crees + ' semaine(s) créée(s)';
-      if (ignorees > 0) resume += ', ' + ignorees + ' déjà existante(s) ignorée(s)';
-      if (echecs > 0) resume += ', ' + echecs + ' échec(s)';
-      if (totalEmails > 0) resume += ' — ' + totalEmails + ' email(s) envoyé(s)';
+      let resume = crees + ' ' + accord(crees, 'semaine(s) créée(s)');
+      if (ignorees > 0) resume += ', ' + ignorees + ' ' + accord(ignorees, 'déjà existante(s) ignorée(s)');
+      if (echecs > 0) resume += ', ' + echecs + ' ' + accord(echecs, 'échec(s)');
+      if (totalEmails > 0) resume += ' — ' + totalEmails + ' ' + accord(totalEmails, 'email(s) envoyé(s)');
       showToast(resume + '.', echecs > 0 ? 'error' : 'success');
       renderView();
     });
@@ -3293,7 +3457,7 @@ async function renderEvenementsGestion(view){
           <div class="week-sub">${noms.length ? participantsResumeHTML(noms, '') : 'Aucun participant désigné'}</div>
           ${ev.lieu ? `<div class="week-sub">${escapeHTML(ev.lieu)}</div>` : ''}
           ${ev.description ? `<div class="week-sub" style="margin-top:2px;">${escapeHTML(ev.description)}</div>` : ''}
-          ${ev.publie_reponses ? `<div class="week-sub" style="margin-top:2px;">Publié pour réponses — ${ev.presents} présent(s) · ${ev.absents} absent(s) · ${ev.enAttente} en attente</div>` : ''}
+          ${ev.publie_reponses ? `<div class="week-sub" style="margin-top:2px;">Publié pour réponses — ${ev.presents} ${accord(ev.presents, 'présent(s)')} · ${ev.absents} ${accord(ev.absents, 'absent(s)')} · ${ev.enAttente} en attente</div>` : ''}
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button class="ghost" data-role="modifier-evenement" data-id="${escapeHTML(ev.id)}">Modifier</button>
@@ -3375,7 +3539,7 @@ async function renderEvenementsGestion(view){
         ? (await envoyerEmailServeur('evenement', { evenement_id: inserted.id })).envoyes
         : 0;
 
-      showToast('Événement ajouté.' + (envoyes ? ' ' + envoyes + ' email(s) envoyé(s).' : ''), 'success');
+      showToast('Événement ajouté.' + (envoyes ? ' ' + envoyes + ' ' + accord(envoyes, 'email(s) envoyé(s)') + '.' : ''), 'success');
       renderView();
     });
   });
@@ -3581,10 +3745,10 @@ async function renderDashboardAdmin(view){
   const actionsNecessaires = semainesNonPublieesFutures.length + nonRepondants.length + (echangesAttente||[]).length + (remplacementsAttente||[]).length;
   if (totalAnomalies > 0 || semainesUrgentes.length > 0) {
     etatClasse = 'rouge';
-    etatLabel = '🔴 ' + (totalAnomalies + semainesUrgentes.length) + ' problème(s) nécessite(nt) votre attention';
+    etatLabel = '🔴 ' + (totalAnomalies + semainesUrgentes.length) + ' ' + accord(totalAnomalies + semainesUrgentes.length, 'problème(s) nécessite(nt)') + ' votre attention';
   } else if (actionsNecessaires > 0) {
     etatClasse = 'orange';
-    etatLabel = '🟠 ' + actionsNecessaires + ' action(s) nécessaire(s)';
+    etatLabel = '🟠 ' + actionsNecessaires + ' ' + accord(actionsNecessaires, 'action(s) nécessaire(s)');
   }
 
   function carte(nombre, label){
@@ -3612,13 +3776,13 @@ async function renderDashboardAdmin(view){
   const autresNonPubliees = semainesNonPublieesFutures.filter(s => !semainesUrgentes.includes(s));
   if (autresNonPubliees.length > 0) {
     aTraiterItems += `<div class="dash-item">
-      <div><strong>🟠 ${autresNonPubliees.length} semaine(s) à venir non publiée(s)</strong><div class="week-sub">Pas encore urgent, mais à préparer.</div></div>
+      <div><strong>🟠 ${autresNonPubliees.length} ${accord(autresNonPubliees.length, 'semaine(s) à venir non publiée(s)')}</strong><div class="week-sub">Pas encore urgent, mais à préparer.</div></div>
       <button class="ghost" data-dash-tab="admin-semaines" data-dash-filtre="non-publiees">Voir les semaines</button>
     </div>`;
   }
   if (nonRepondants.length > 0 && prochaineOuverte) {
     aTraiterItems += `<div class="dash-item">
-      <div><strong>🟠 ${nonRepondants.length} agent(s) n'ont pas répondu</strong><div class="week-sub">${escapeHTML(weekLabel(prochaineOuverte))}</div></div>
+      <div><strong>🟠 ${nonRepondants.length} ${nonRepondants.length > 1 ? 'agents n\'ont' : 'agent n\'a'} pas répondu</strong><div class="week-sub">${escapeHTML(weekLabel(prochaineOuverte))}</div></div>
       <button class="ghost" data-dash-relancer="${escapeHTML(prochaineOuverte.id)}">Relancer</button>
     </div>`;
   }
@@ -3787,7 +3951,7 @@ async function renderAgentsAdmin(view){
   view.innerHTML = syntheseAgents + `
     ${sansAcces.length || sansEmail.length ? `<div class="card">
       <h3>Accès à l'application</h3>
-      ${sansAcces.length ? `<div class="week-sub" style="margin-bottom:8px;">${sansAcces.length} agent(s) sans accès : ${sansAcces.map(a => escapeHTML(a.nom)).join(', ')}. Les inscriptions libres étant fermées, leur compte doit être créé ici ; ils reçoivent un email d'accueil puis se connectent avec le lien habituel.</div>
+      ${sansAcces.length ? `<div class="week-sub" style="margin-bottom:8px;">${sansAcces.length} ${accord(sansAcces.length, 'agent(s)')} sans accès : ${sansAcces.map(a => escapeHTML(a.nom)).join(', ')}. Les inscriptions libres étant fermées, leur compte doit être créé ici ; ils reçoivent un email d'accueil puis se connectent avec le lien habituel.</div>
         <button class="primary" id="btn-creer-acces">Créer les accès et prévenir par email</button>` : ''}
       ${sansEmail.length ? `<div class="week-sub" style="margin-top:8px;">Sans adresse email (pas d'accès possible) : ${sansEmail.map(a => escapeHTML(a.nom)).join(', ')}.</div>` : ''}
     </div>` : ''}
@@ -4436,7 +4600,7 @@ async function renderPlanningAgentsCommunaux(view){
           auteur_id: state.agent.id
         }).then(({error}) => { if (error) console.error('Historique non enregistré', error); });
 
-        showToast(`${aCreer.length} journée(s) générée(s).`, 'success');
+        showToast(`${aCreer.length} ${accord(aCreer.length, 'journée(s) générée(s)')}.`, 'success');
         renderView();
       });
     });
@@ -4486,7 +4650,7 @@ async function renderPlanningAgentsCommunaux(view){
           auteur_id: state.agent.id
         }).then(({error}) => { if (error) console.error('Historique non enregistré', error); });
 
-        showToast(`${joursListe.length} journée(s) enregistrée(s).`, 'success');
+        showToast(`${joursListe.length} ${accord(joursListe.length, 'journée(s) enregistrée(s)')}.`, 'success');
         renderView();
       });
     });
