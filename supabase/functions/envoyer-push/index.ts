@@ -16,10 +16,36 @@ const SUJET = 'mailto:lieveauxfrancois@gmail.com'; // contact demandé par les s
 const json = (corps: unknown, status = 200) =>
   new Response(JSON.stringify(corps), { status, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
 
-function estAppelServeur(req: Request): boolean {
-  const jwt = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
-  try { return JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).role === 'service_role'; }
-  catch { return false; }
+// Appel « serveur » (tâche programmée, déclencheur de la base) : le jeton
+// présenté doit être une vraie clé de service. Lire le rôle inscrit dans le
+// jeton ne prouve rien à lui seul (n'importe qui peut écrire « service_role »
+// dans un faux jeton) : la clé est donc comparée à celle du serveur et, si
+// elle diffère (ancienne clé encore valide…), validée auprès de Supabase.
+// La fonction reste ainsi protégée même si la vérification des jetons en
+// amont (« verify_jwt ») était un jour désactivée lors d'un déploiement.
+function roleDuJeton(jwt: string): string | null {
+  try { return JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).role ?? null; }
+  catch { return null; }
+}
+function egal(a: string, b: string): boolean {               // comparaison à durée constante
+  if (a.length !== b.length) return false;
+  let r = 0; for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return r === 0;
+}
+async function estCleServeur(jwt: string): Promise<boolean> {
+  const url = Deno.env.get('SUPABASE_URL') ?? '';
+  const cle = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  if (!jwt) return false;
+  if (cle && egal(jwt, cle)) return true;
+  if (roleDuJeton(jwt) !== 'service_role') return false;
+  try {
+    const r = await fetch(`${url}/auth/v1/admin/users?page=1&per_page=1`, { headers: { apikey: jwt, Authorization: `Bearer ${jwt}` } });
+    await r.body?.cancel();
+    return r.ok;
+  } catch { return false; }
+}
+function estAppelServeur(req: Request): Promise<boolean> {
+  return estCleServeur((req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, ''));
 }
 
 async function clesVapid(creer: boolean) {
@@ -33,7 +59,7 @@ async function clesVapid(creer: boolean) {
 }
 
 Deno.serve(async (req) => {
-  if (!estAppelServeur(req)) return json({ erreur: 'Accès refusé.' }, 403);
+  if (!(await estAppelServeur(req))) return json({ erreur: 'Accès refusé.' }, 403);
   const corps = await req.json().catch(() => ({}));
 
   if (corps.action === 'init') {

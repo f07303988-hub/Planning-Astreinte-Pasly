@@ -62,9 +62,33 @@ async function envoyer(email: string, nom: string, sujet: string, texte: string)
   if (!res.ok) throw new Error(`Brevo ${res.status} : ${await res.text()}`);
 }
 
+// Appel « serveur » (tâche programmée, déclencheur de la base) : le jeton
+// présenté doit être une vraie clé de service. Lire le rôle inscrit dans le
+// jeton ne prouve rien à lui seul (n'importe qui peut écrire « service_role »
+// dans un faux jeton) : la clé est donc comparée à celle du serveur et, si
+// elle diffère (ancienne clé encore valide…), validée auprès de Supabase.
+// La fonction reste ainsi protégée même si la vérification des jetons en
+// amont (« verify_jwt ») était un jour désactivée lors d'un déploiement.
 function roleDuJeton(jwt: string): string | null {
   try { return JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).role ?? null; }
   catch { return null; }
+}
+function egal(a: string, b: string): boolean {               // comparaison à durée constante
+  if (a.length !== b.length) return false;
+  let r = 0; for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return r === 0;
+}
+async function estCleServeur(jwt: string): Promise<boolean> {
+  const url = Deno.env.get('SUPABASE_URL') ?? '';
+  const cle = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  if (!jwt) return false;
+  if (cle && egal(jwt, cle)) return true;
+  if (roleDuJeton(jwt) !== 'service_role') return false;
+  try {
+    const r = await fetch(`${url}/auth/v1/admin/users?page=1&per_page=1`, { headers: { apikey: jwt, Authorization: `Bearer ${jwt}` } });
+    await r.body?.cancel();
+    return r.ok;
+  } catch { return false; }
 }
 
 type Message = { email: string; nom: string; sujet: string; texte: string };
@@ -75,7 +99,7 @@ Deno.serve(async (req) => {
 
   const sb = createClient(SUPABASE_URL, SERVICE_KEY);
   const jwt = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
-  const estServeur = roleDuJeton(jwt) === 'service_role';
+  const estServeur = await estCleServeur(jwt);
 
   // ---- Qui appelle ? ----
   let appelant: { id: string; role: string; actif: boolean; peut_gerer_evenements: boolean } | null = null;
