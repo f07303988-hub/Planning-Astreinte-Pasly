@@ -135,6 +135,11 @@
   nav.tabs.au-bout{--fondu-d:0px;}
   nav.tabs.entame{--fondu-g:34px;}
   nav.tabs.avec-sous-onglets{margin-bottom:10px;}
+  /* Sur ordinateur, pas de défilement horizontal (impraticable à la souris) :
+     les onglets passent à la ligne s'ils ne tiennent pas tous. */
+  @media (min-width:700px){
+    nav.tabs{flex-wrap:wrap;overflow-x:visible;-webkit-mask-image:none;mask-image:none;}
+  }
   /* Sous-onglets de « Gestion » (Semaines, Échanges, Agents). */
   nav.subtabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;}
   nav.subtabs button{
@@ -696,7 +701,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.11.10d";
+const APP_VERSION = "2026.11.10e";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
