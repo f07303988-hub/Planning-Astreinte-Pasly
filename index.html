@@ -412,10 +412,6 @@
     text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     margin-top:1px;padding:0 1px;
   }
-  /* Nom trop long pour la case : il peut déborder sur la case suivante de la
-     même semaine quand elle n'affiche pas de nom (voir ajusterNomsCalendrier). */
-  .cal-cell.cal-deborde{overflow:visible;}
-  .cal-cell.cal-deborde .cal-nom{overflow:visible;text-overflow:clip;text-align:left;padding-left:3px;position:relative;z-index:2;}
   /* Événements : une pastille de couleur par élément (détail au toucher). */
   .cal-dots{display:flex;flex-wrap:wrap;justify-content:center;gap:2px;margin-top:auto;padding-top:2px;}
   .cal-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 1px rgba(255,255,255,.8);}
@@ -700,7 +696,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.11.10c";
+const APP_VERSION = "2026.11.10d";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1276,17 +1272,16 @@ function renderMonthCalendarHTML(semainesPubliees, planByWeek, agentById, meId, 
     </div>`;
 }
 
-// Un nom trop long pour sa case déborde sur la case suivante quand celle-ci
-// est sur la même ligne et n'affiche pas elle-même de nom ; sinon il reste
-// tronqué (« … »). Mesuré après affichage, donc adapté à chaque écran.
+// Un nom trop long pour sa case est écrit un peu plus petit, juste assez pour
+// tenir dedans (jusqu'à 70 % de la taille normale ; au-delà il reste tronqué
+// par « … »). Mesuré après affichage, donc adapté à chaque écran.
 function ajusterNomsCalendrier(view){
-  const cellules = Array.from(view.querySelectorAll('.cal-grid > .cal-cell'));
-  cellules.forEach((cell, i) => {
-    const nom = cell.querySelector('.cal-nom');
-    if (!nom || nom.scrollWidth <= nom.clientWidth + 1) return;
-    const suivante = cellules[i + 1];
-    if ((i % 7) === 6 || !suivante || suivante.classList.contains('cal-empty') || suivante.querySelector('.cal-nom')) return;
-    cell.classList.add('cal-deborde');
+  view.querySelectorAll('.cal-grid .cal-nom').forEach(nom => {
+    if (nom.scrollWidth <= nom.clientWidth + 1) return;
+    const taille = parseFloat(getComputedStyle(nom).fontSize);
+    const echelle = Math.max(0.7, (nom.clientWidth - 1) / nom.scrollWidth);
+    nom.style.fontSize = (taille * echelle).toFixed(2) + 'px';
+    nom.style.letterSpacing = '0';
   });
 }
 
