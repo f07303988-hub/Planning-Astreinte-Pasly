@@ -117,6 +117,11 @@
     margin:0 auto;
     padding:24px 18px 80px;
   }
+  /* Grand écran (ordinateur) : colonne élargie, pour que tous les onglets
+     tiennent sur une ligne et que le calendrier profite de la place. */
+  @media (min-width:1100px){
+    main{max-width:1000px;}
+  }
 
   nav.tabs{
     display:flex;
@@ -473,7 +478,7 @@
   .cal-legende span{display:inline-flex;align-items:center;gap:5px;}
   .cal-legende i{width:10px;height:10px;border-radius:2px;display:inline-block;}
   @media print { .cal-cell{min-height:38px;} }
-  /* Sur grand écran, l'appli est plafonnée à 760px (voir main{max-width})
+  /* Sur écran moyen, l'appli est plafonnée à 760px (voir main{max-width})
      donc les cases du calendrier sont déjà ~2x plus larges que sur
      mobile — mais le texte restait minuscule par défaut, laissant de
      l'espace vide plutôt que d'être plus lisible. On en profite ici. */
@@ -484,6 +489,13 @@
     .cal-more{font-size:.68rem;}
     .cal-nom{font-size:.68rem;}
     .cal-dot{width:9px;height:9px;}
+  }
+
+  @media (min-width:1100px){
+    .cal-cell{min-height:84px;padding:7px 6px;}
+    .cal-day{font-size:.95rem;}
+    .cal-nom{font-size:.76rem;}
+    .cal-item{font-size:.74rem;}
   }
 
   /* Tableau de bord admin */
@@ -701,7 +713,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.11.10e";
+const APP_VERSION = "2026.11.10f";
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
