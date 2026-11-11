@@ -294,6 +294,21 @@
   button.ghost:hover{border-color:var(--navy);}
   button.ghost:disabled, button.primary:disabled{opacity:.6;cursor:not-allowed;}
 
+  /* Fenêtre de confirmation (remplace la boîte du navigateur) */
+  #confirmation{border:none;border-radius:14px;padding:22px 20px 18px;width:min(92vw,440px);max-height:86vh;overflow:auto;
+    background:var(--white);color:var(--ink);box-shadow:0 18px 50px rgba(27,42,65,.35);font-family:'IBM Plex Sans', sans-serif;}
+  #confirmation::backdrop{background:rgba(27,42,65,.55);}
+  #confirmation-texte{margin:0 0 18px;white-space:pre-wrap;line-height:1.45;font-size:1rem;overflow-wrap:anywhere;}
+  #confirmation .confirmation-boutons{display:flex;gap:10px;}
+  #confirmation .confirmation-boutons button{min-height:48px;font-size:1rem;margin:0;}
+  #confirmation .confirmation-boutons button.ghost{flex:1;}
+  #confirmation .confirmation-boutons button.primary{flex:2;}
+  #confirmation button.primary{background:var(--navy);}
+  #confirmation button.primary:hover{background:#111D2E;}
+  #confirmation button.primary.danger{background:#A3261B;}
+  #confirmation button.primary.danger:hover{background:#861D14;}
+  #confirmation button:focus-visible{outline:3px solid var(--navy);outline-offset:2px;}
+
   .empty{
     text-align:center;
     color:#8a8272;
@@ -695,6 +710,13 @@
   </main>
 </div>
 
+<dialog id="confirmation" aria-labelledby="confirmation-texte">
+  <p id="confirmation-texte"></p>
+  <div class="confirmation-boutons">
+    <button type="button" class="ghost" data-rep="non">Non</button>
+    <button type="button" class="primary" data-rep="oui">Oui</button>
+  </div>
+</dialog>
 <div id="toast-wrap"></div>
 <div id="modal-backdrop" class="hidden">
   <div id="modal-content"></div>
@@ -713,7 +735,35 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.11.10f";
+const APP_VERSION = "2026.11.11a";
+
+// Question « Oui / Non » dans une fenêtre de l'application (au lieu de la boîte du navigateur).
+// Renvoie une promesse : true pour Oui ; false pour Non, la touche Échap ou un appui à côté.
+// Pour une suppression ou une désactivation : bouton Oui rouge, curseur placé sur Non.
+let confirmationRepondre = null;
+function confirmer(message){
+  const d = document.getElementById('confirmation');
+  if (!d || typeof d.showModal !== 'function') return Promise.resolve(window.confirm(message));   // très ancien navigateur
+  if (confirmationRepondre) confirmationRepondre(false);
+  const danger = /^(Supprimer|Désactiver)|définitivement/.test(message);
+  const oui = d.querySelector('[data-rep="oui"]'), non = d.querySelector('[data-rep="non"]');
+  document.getElementById('confirmation-texte').textContent = message;
+  oui.className = danger ? 'primary danger' : 'primary';
+  return new Promise(res => {
+    confirmationRepondre = rep => { confirmationRepondre = null; if (d.open) d.close(); res(rep); };
+    d.showModal();
+    (danger ? non : oui).focus();
+  });
+}
+document.getElementById('confirmation').addEventListener('click', e => {
+  const rep = e.target.closest?.('[data-rep]')?.dataset.rep;
+  if (rep) confirmationRepondre?.(rep === 'oui');
+  else if (e.target === e.currentTarget) confirmationRepondre?.(false);                               // appui à côté
+});
+document.getElementById('confirmation').addEventListener('cancel', () => confirmationRepondre?.(false));   // touche Échap
+// Fermeture signalée avec un léger retard par le navigateur : si une nouvelle question est déjà
+// affichée, ce signal concerne la précédente et ne doit pas y répondre.
+document.getElementById('confirmation').addEventListener('close', e => { if (!e.currentTarget.open) confirmationRepondre?.(false); });
 document.getElementById('app-version').textContent = `v${APP_VERSION}`;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -2108,7 +2158,7 @@ function afficherModaleAgenda(jeton){
     catch(e) { window.prompt('Copiez ce lien :', https); }
   });
   document.getElementById('agenda-regenerer').addEventListener('click', async (e) => {
-    if (!confirm('Remplacer votre lien d\'agenda ?\n\nL\'ancien lien cessera immédiatement de fonctionner : il faudra supprimer l\'ancien abonnement de votre téléphone et vous réabonner.')) return;
+    if (!await confirmer('Remplacer votre lien d\'agenda ?\n\nL\'ancien lien cessera immédiatement de fonctionner : il faudra supprimer l\'ancien abonnement de votre téléphone et vous réabonner.')) return;
     await withLoading(e.currentTarget, 'Remplacement…', async () => {
       const { data: nouveau, error } = await sb.rpc('regenerer_jeton_agenda');
       if (error || !nouveau) { showToast('Erreur : ' + (error ? error.message : 'action impossible.'), 'error'); return; }
@@ -2575,7 +2625,7 @@ async function renderDispos(view){
 
   view.querySelectorAll('[data-role=suppr-periode]').forEach(btn => {
     btn.addEventListener('click', async (e) => {
-      if (!confirm('Supprimer cette période ? Les semaines déjà modifiées à cause d\'elle resteront ainsi : vous pourrez ajuster manuellement votre disponibilité si besoin, dans « Vos disponibilités » ci-dessous.')) return;
+      if (!await confirmer('Supprimer cette période ? Les semaines déjà modifiées à cause d\'elle resteront ainsi : vous pourrez ajuster manuellement votre disponibilité si besoin, dans « Vos disponibilités » ci-dessous.')) return;
       await withLoading(e.currentTarget, 'Suppression…', async () => {
         const { error } = await sb.from('indisponibilites_periodes').delete().eq('id', btn.dataset.id);
         if (error) { showToast('Erreur : ' + error.message, 'error'); return; }
@@ -3046,7 +3096,7 @@ async function renderPlanningAdmin(view){
       if (!sel.value) { showToast('Choisissez un agent avant de publier.', 'error'); return; }
       const agentChoisi = agentById[sel.value];
       const semaineChoisie = semainesToutes.find(s => s.id === semaineId);
-      const confirmation = confirm(
+      const confirmation = await confirmer(
         'Publier cette astreinte ?\n\n' +
         (agentChoisi ? agentChoisi.nom : 'Cet agent') + ' sera officiellement désigné' +
         (semaineChoisie ? ' pour la ' + weekLabel(semaineChoisie).toLowerCase() : '') + '.\n\n' +
@@ -3327,7 +3377,7 @@ async function renderSemainesAdmin(view){
       const semaine = (semainesToutes||[]).find(s => s.id === btn.dataset.id);
       const detail = semaine ? weekLabel(semaine).toLowerCase() : 'cette semaine';
       const avertPubliee = semaine && semaine.statut === 'publiee' ? '\n\n⚠ Cette semaine est déjà publiée et visible des agents.' : '';
-      if (!confirm('Supprimer la ' + detail + ' ?\n\nToutes ses données associées (disponibilités, planning, échanges) seront perdues définitivement.' + avertPubliee)) return;
+      if (!await confirmer('Supprimer la ' + detail + ' ?\n\nToutes ses données associées (disponibilités, planning, échanges) seront perdues définitivement.' + avertPubliee)) return;
       await withLoading(e.currentTarget, 'Suppression…', async () => {
         const { error } = await sb.from('semaines').delete().eq('id', btn.dataset.id);
         if (error) { showToast('Erreur : ' + error.message, 'error'); return; }
@@ -3446,7 +3496,7 @@ async function renderEchangesAdmin(view){
 
   view.querySelectorAll('[data-role=suppr]').forEach(btn => {
     btn.addEventListener('click', async (e) => {
-      if (!confirm('Supprimer cette demande d\'échange ?')) return;
+      if (!await confirmer('Supprimer cette demande d\'échange ?')) return;
       await withLoading(e.currentTarget, 'Suppression…', async () => {
         const { error } = await sb.from('echanges').delete().eq('id', btn.dataset.id);
         if (error) { showToast('Erreur : ' + error.message, 'error'); return; }
@@ -3458,7 +3508,7 @@ async function renderEchangesAdmin(view){
 
   view.querySelectorAll('[data-role=suppr-r]').forEach(btn => {
     btn.addEventListener('click', async (e) => {
-      if (!confirm('Supprimer cette demande de remplacement ?')) return;
+      if (!await confirmer('Supprimer cette demande de remplacement ?')) return;
       await withLoading(e.currentTarget, 'Suppression…', async () => {
         const { error } = await sb.from('remplacements_jour').delete().eq('id', btn.dataset.id);
         if (error) { showToast('Erreur : ' + error.message, 'error'); return; }
@@ -3619,7 +3669,7 @@ async function renderEvenementsGestion(view){
 
   view.querySelectorAll('[data-role=suppr-evenement]').forEach(btn => {
     btn.addEventListener('click', async (e) => {
-      if (!confirm('Supprimer cet événement ?')) return;
+      if (!await confirmer('Supprimer cet événement ?')) return;
       await withLoading(e.currentTarget, 'Suppression…', async () => {
         const { error } = await sb.from('evenements').delete().eq('id', btn.dataset.id);
         if (error) { showToast('Erreur : ' + error.message, 'error'); return; }
@@ -4291,7 +4341,7 @@ async function renderAgentsAdmin(view){
 
   const btnAcces = document.getElementById('btn-creer-acces');
   if (btnAcces) btnAcces.addEventListener('click', async (e) => {
-    if (!confirm('Créer le compte de ' + sansAcces.map(a => a.nom).join(', ') + ' et leur envoyer un email d\'accueil ?')) return;
+    if (!await confirmer('Créer le compte de ' + sansAcces.map(a => a.nom).join(', ') + ' et leur envoyer un email d\'accueil ?')) return;
     await withLoading(e.currentTarget, 'Création…', async () => {
       const acces = messageAcces(await creerAcces(null)) || { txt: 'Aucun accès à créer.', type: 'success' };
       showToast(acces.txt, acces.type);
@@ -4335,7 +4385,7 @@ async function renderAgentsAdmin(view){
 
       const emailChange = original && email.toLowerCase() !== (original.email||'').toLowerCase();
       if (emailChange) {
-        const confirmation = confirm(
+        const confirmation = await confirmer(
           'Changer cet email a des conséquences importantes :\n\n' +
           '• Son compte de connexion passe à la nouvelle adresse : l\'ancienne ne permet plus de se connecter.\n' +
           '• Son mot de passe éventuel reste valable, avec la nouvelle adresse.\n' +
@@ -4347,13 +4397,13 @@ async function renderAgentsAdmin(view){
 
       const desactivation = original && original.actif && !actif;
       if (desactivation) {
-        if (!confirm('Désactiver ' + nom + ' ?\n\nCette personne perdra immédiatement tout accès à l\'application. Son historique (astreintes passées, échanges) reste conservé, mais elle ne sera plus proposée pour de nouvelles affectations.')) return;
+        if (!await confirmer('Désactiver ' + nom + ' ?\n\nCette personne perdra immédiatement tout accès à l\'application. Son historique (astreintes passées, échanges) reste conservé, mais elle ne sera plus proposée pour de nouvelles affectations.')) return;
       }
 
       const roleChange = original && original.role !== role;
       if (roleChange) {
         const labelRole = { agent: 'Agent', lecteur: 'Lecteur', admin: 'Admin' };
-        if (!confirm('Changer le rôle de ' + nom + ' de « ' + (labelRole[original.role]||original.role) + ' » à « ' + (labelRole[role]||role) + ' » ?\n\n' + (role === 'admin' ? 'Cette personne aura accès à la gestion complète de l\'application (agents, semaines, publication du planning).' : 'Vérifiez que ce nouveau rôle correspond bien à ce que cette personne doit pouvoir faire.'))) return;
+        if (!await confirmer('Changer le rôle de ' + nom + ' de « ' + (labelRole[original.role]||original.role) + ' » à « ' + (labelRole[role]||role) + ' » ?\n\n' + (role === 'admin' ? 'Cette personne aura accès à la gestion complète de l\'application (agents, semaines, publication du planning).' : 'Vérifiez que ce nouveau rôle correspond bien à ce que cette personne doit pouvoir faire.'))) return;
       }
 
       await withLoading(e.currentTarget, 'Enregistrement…', async () => {
@@ -4655,7 +4705,7 @@ async function renderPlanningAgentsCommunaux(view){
         if (!aCreer.length) { gmsg.textContent = 'Rien à générer : aucun horaire habituel ne correspond à cette période, ou toutes les journées concernées existent déjà.'; gmsg.className = 'msg'; return; }
 
         const conflitTxt = datesExistantes.size ? `\n\n${datesExistantes.size} journée(s) déjà renseignée(s) sur cette période seront laissées telles quelles (jamais écrasées).` : '';
-        if (!confirm(`Générer ${aCreer.length} journée(s) de travail pour ${agent.nom} entre le ${formatDateFR(debut)} et le ${formatDateFR(fin)} ?${conflitTxt}`)) return;
+        if (!await confirmer(`Générer ${aCreer.length} journée(s) de travail pour ${agent.nom} entre le ${formatDateFR(debut)} et le ${formatDateFR(fin)} ?${conflitTxt}`)) return;
 
         const { error } = await sb.from('planning_agents').insert(aCreer);
         if (error) { gmsg.textContent = 'Erreur : ' + error.message; gmsg.className = 'msg err'; return; }
@@ -4698,7 +4748,7 @@ async function renderPlanningAgentsCommunaux(view){
         const conflits = (existants||[]).filter(l => joursListe.includes(l.date));
         if (conflits.length) {
           const detail = conflits.map(c => `${formatDateFR(c.date)} (${typePlanningAgentLabel(c.type)})`).join(', ');
-          if (!confirm(`${conflits.length} journée(s) déjà renseignée(s) sur cette période seront remplacées :\n\n${detail}\n\nContinuer ?`)) return;
+          if (!await confirmer(`${conflits.length} journée(s) déjà renseignée(s) sur cette période seront remplacées :\n\n${detail}\n\nContinuer ?`)) return;
         }
 
         const lignes = joursListe.map(iso => ({
@@ -5188,7 +5238,7 @@ function ouvrirModaleJourAgent(agent, dateISO, ligne, agentsCommunaux){
   const btnSupprimer = document.getElementById('pa-supprimer');
   if (btnSupprimer) {
     btnSupprimer.addEventListener('click', async (e) => {
-      if (!confirm(`Supprimer cette entrée du planning de ${agent.nom} pour le ${formatDateFR(dateISO)} ?`)) return;
+      if (!await confirmer(`Supprimer cette entrée du planning de ${agent.nom} pour le ${formatDateFR(dateISO)} ?`)) return;
       await withLoading(e.currentTarget, 'Suppression…', async () => {
         const { error: err } = await sb.from('planning_agents').delete().eq('id', ligne.id);
         if (err) { showToast('Erreur : ' + err.message, 'error'); return; }
