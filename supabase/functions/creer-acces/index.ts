@@ -59,7 +59,7 @@ Deno.serve(async (req) => {
   const jwt = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
   const { data: u, error: eu } = await sb.auth.getUser(jwt);
   if (eu || !u?.user?.email) return reponse({ erreur: 'Connexion requise.' }, 401);
-  const { data: moi } = await sb.from('agents').select('role, actif').ilike('email', u.user.email).maybeSingle();
+  const { data: moi } = await sb.from('agents').select('role, actif').eq('email', u.user.email.toLowerCase()).maybeSingle();   // adresses toujours en minuscules en base
   if (!moi || !moi.actif || moi.role !== 'admin') return reponse({ erreur: 'Réservé aux administrateurs.' }, 403);
 
   let corps: { agent_id?: string; ancien_email?: string; test?: boolean } = {};
@@ -86,7 +86,7 @@ Deno.serve(async (req) => {
     const nouvelle = String(a?.email ?? '').trim().toLowerCase();
     if (a && nouvelle && nouvelle !== ancien && !existants.has(nouvelle)) {
       // L'ancienne adresse ne doit plus être celle d'une autre fiche
-      const { data: autre } = await sb.from('agents').select('id').ilike('email', ancien).maybeSingle();
+      const { data: autre } = await sb.from('agents').select('id').eq('email', ancien).maybeSingle();
       if (!autre) {
         if (corps.test) return reponse({ test: true, deplace: `${ancien} → ${nouvelle}` });
         const { error } = await sb.auth.admin.updateUserById(existants.get(ancien)!, { email: nouvelle, email_confirm: true });

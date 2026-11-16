@@ -125,7 +125,7 @@ Deno.serve(async (req) => {
   if (!estServeur) {
     const { data: u, error } = await sb.auth.getUser(jwt);
     if (error || !u?.user?.email) return json({ erreur: 'Connexion requise.' }, 401);
-    const { data: a } = await sb.from('agents').select('role, actif').ilike('email', u.user.email).maybeSingle();
+    const { data: a } = await sb.from('agents').select('role, actif').eq('email', u.user.email.toLowerCase()).maybeSingle();   // adresses toujours en minuscules en base
     if (!a || !a.actif || a.role !== 'admin') return json({ erreur: 'Réservé aux administrateurs.' }, 403);
   }
   const corps = await req.json().catch(() => ({}));
