@@ -25,7 +25,9 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const BREVO_API_KEY = Deno.env.get('BREVO_API_KEY') ?? '';
 const SENDER_EMAIL = Deno.env.get('BREVO_SENDER_EMAIL') ?? '';
-const DESTINATAIRE = 'lieveauxfrancois@gmail.com';
+// Destinataire : l'adresse de l'expéditeur vérifié, sauf si le secret
+// SAUVEGARDE_DESTINATAIRE en indique une autre (aucune adresse dans le code, qui est public).
+const DESTINATAIRE = Deno.env.get('SAUVEGARDE_DESTINATAIRE') || SENDER_EMAIL;
 
 // Ordre = ordre de restauration (les tables référencées d'abord).
 const TABLES = [
