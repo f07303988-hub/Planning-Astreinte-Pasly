@@ -3018,7 +3018,10 @@ async function renderPlanningAdmin(view){
           <div class="week-titulaire">${agentAssigne ? escapeHTML(agentAssigne.nom) : '(non assigné)'} <span class="week-etat">· ${escapeHTML(statutSemaineLabel(s.statut))}</span></div>
           ${evenementsHTML}
         </div>
-        ${s.date_fin >= today ? `<button class="ghost" data-role="rappel" data-semaine="${escapeHTML(s.id)}" title="Renvoyer l'email de désignation à l'agent">Rappel</button>` : ''}
+        ${s.date_fin >= today ? `<div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap;flex:0 1 auto;" class="no-print">
+          <button class="ghost" data-role="changer" data-semaine="${escapeHTML(s.id)}" title="Désigner un autre agent pour cette semaine déjà publiée">Changer</button>
+          <button class="ghost" data-role="rappel" data-semaine="${escapeHTML(s.id)}" title="Renvoyer l'email de désignation à l'agent">Rappel</button>
+        </div>` : ''}
       </div>`;
     }
     return `
@@ -3125,6 +3128,56 @@ async function renderPlanningAdmin(view){
           showToast('Planning publié. Attention : l\'email n\'a pas pu être envoyé' + (emailResult.erreur ? ' (' + emailResult.erreur + ')' : '') + '.', 'error');
         }
         renderView();
+      });
+    });
+  });
+
+  // Semaine déjà publiée : l'administrateur désigne un autre titulaire
+  // (agent malade, injoignable…). Tout se fait côté serveur en une seule
+  // opération (fonction reaffecter_astreinte) : planning, clôture des demandes
+  // en cours sur la semaine, notifications à l'ancien et au nouveau titulaire.
+  view.querySelectorAll('[data-role=changer]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const semaineId = btn.dataset.semaine;
+      const s = semainesToutes.find(x => x.id === semaineId);
+      const p = planByWeek[semaineId];
+      if (!s || !p) { showToast('Aucun agent assigné à cette semaine.', 'error'); return; }
+      const actuel = agentByIdTous[p.agent_id];
+      const disponibleIds = new Set((dispoBySemaine[semaineId] || []).filter(d => d.niveau !== 'non').map(d => d.agent_id));
+      const possibles = eligibles.filter(a => a.id !== p.agent_id);
+      const option = a => `<option value="${escapeHTML(a.id)}">${escapeHTML(a.nom)}</option>`;
+      const dispos = possibles.filter(a => disponibleIds.has(a.id)), autres = possibles.filter(a => !disponibleIds.has(a.id));
+      openModal(`
+        <h3>Changer le titulaire</h3>
+        <div class="week-sub" style="margin-bottom:10px;">${escapeHTML(weekLabel(s))} — actuellement : <strong>${escapeHTML(actuel ? actuel.nom : 'agent inconnu')}</strong></div>
+        <label for="changer-agent">Nouveau titulaire</label>
+        <select id="changer-agent" style="width:100%;">
+          <option value="">— choisir —</option>
+          ${dispos.length ? `<optgroup label="Déclarés disponibles">${dispos.map(option).join('')}</optgroup>` : ''}
+          ${autres.length ? `<optgroup label="Autres agents éligibles">${autres.map(option).join('')}</optgroup>` : ''}
+        </select>
+        <div class="week-sub" style="margin-top:10px;">L'ancien et le nouveau titulaire sont prévenus (notification et email). Les demandes d'échange ou de remplacement en cours sur cette semaine sont closes, et un remplacement d'un jour déjà accepté est annulé.</div>
+        <div class="msg" id="modal-msg"></div>
+        <div class="modal-actions">
+          <button class="ghost" id="modal-cancel">Annuler</button>
+          <button class="primary" id="changer-valider">Changer le titulaire</button>
+        </div>
+      `);
+      document.getElementById('modal-cancel').addEventListener('click', closeModal);
+      document.getElementById('changer-valider').addEventListener('click', async (e) => {
+        const mmsg = document.getElementById('modal-msg');
+        const nouveauId = document.getElementById('changer-agent').value;
+        if (!nouveauId) { mmsg.textContent = 'Choisissez le nouveau titulaire.'; mmsg.className = 'msg err'; return; }
+        await withLoading(e.currentTarget, 'Changement…', async () => {
+          const { data, error } = await sb.rpc('reaffecter_astreinte', { p_semaine_id: semaineId, p_agent_id: nouveauId });
+          if (error) { mmsg.textContent = 'Changement impossible : ' + error.message; mmsg.className = 'msg err'; return; }
+          const emailResult = await envoyerEmailServeur('publication', { semaine_id: semaineId });
+          closeModal();
+          const annules = data.remplacants_prevenus > 0 ? ' ' + data.remplacants_prevenus + ' ' + accord(data.remplacants_prevenus, 'remplaçant(s) prévenu(s)') + ' de l\'annulation.' : '';
+          if (emailResult.ok && emailResult.envoyes > 0) showToast('Titulaire changé : ' + data.nouveau_nom + ' est prévenu(e) par email.' + annules, 'success');
+          else showToast('Titulaire changé : ' + data.nouveau_nom + '. Attention : son email n\'a pas pu être envoyé' + (emailResult.erreur ? ' (' + emailResult.erreur + ')' : '') + '.' + annules, 'error');
+          renderView();
+        });
       });
     });
   });
@@ -3941,7 +3994,7 @@ async function renderDashboardAdmin(view){
   let anomaliesItems = '';
   anomaliesTitulaire.forEach(a => {
     anomaliesItems += `<div class="dash-item">
-      <div><strong>🔴 ${escapeHTML(a.agent ? a.agent.nom : 'Agent inconnu')}</strong><div class="week-sub">Affecté ${escapeHTML(weekLabel(a.semaine).toLowerCase())} alors que : ${escapeHTML(a.raison)}. Cette astreinte n'est plus assurée.</div></div>
+      <div><strong>🔴 ${escapeHTML(a.agent ? a.agent.nom : 'Agent inconnu')}</strong><div class="week-sub">Affecté ${escapeHTML(weekLabel(a.semaine).toLowerCase())} alors que : ${escapeHTML(a.raison)}. Cette astreinte n'est plus assurée : utilisez « Changer » sur la semaine.</div></div>
       <button class="ghost" data-dash-semaine="${escapeHTML(a.semaine.id)}">Voir</button>
     </div>`;
   });
@@ -4433,7 +4486,7 @@ async function renderAgentsAdmin(view){
           const liste = aVenir.map(s => '• ' + weekLabel(s).toLowerCase() + (s.statut === 'publiee' ? '' : ' (proposition non publiée)')).join('\n');
           if (!await confirmer(
             nom + ' est encore ' + (aVenir.length > 1 ? 'prévu(e) pour ' + aVenir.length + ' astreintes à venir' : 'prévu(e) pour une astreinte à venir') + ' :\n\n' + liste + '\n\n' +
-            'Ces semaines ne seront pas réaffectées automatiquement et resteront signalées en anomalie au tableau de bord tant qu\'elles n\'auront pas un autre titulaire.\n\nEnregistrer quand même ?'
+            'Ces semaines ne seront pas réaffectées automatiquement : désignez un autre titulaire avec le bouton « Changer » de l\'onglet Planning (elles restent signalées en anomalie au tableau de bord d\'ici là).\n\nEnregistrer quand même ?'
           )) return;
         }
       }
