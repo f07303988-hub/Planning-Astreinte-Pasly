@@ -50,11 +50,16 @@ function echapper(s: string): string {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
 
+// Lien qui ouvre l'appli directement sur l'onglet « Mes disponibilités », à la
+// semaine concernée (mêmes paramètres que les alertes du téléphone).
+const lienDispos = (semaineId: string) => `${APP_URL}?onglet=dispos&semaine=${encodeURIComponent(semaineId)}`;
+
 // `liste` : lignes affichées en liste à puces sous le texte (relance groupée).
-async function envoyer(email: string, nom: string, sujet: string, texte: string, liste: string[] = []): Promise<void> {
+// `lien` : adresse ouverte par le lien du message (par défaut, l'accueil de l'appli).
+async function envoyer(email: string, nom: string, sujet: string, texte: string, liste: string[] = [], lien: string = APP_URL): Promise<void> {
   const html = `<p>Bonjour ${echapper(nom)},</p><p>${echapper(texte)}</p>` +
     (liste.length ? `<ul>${liste.map(l => `<li>${echapper(l)}</li>`).join('')}</ul>` : '') +
-    `<p><a href="${APP_URL}">Ouvrir le planning des astreintes</a></p>` +
+    `<p><a href="${echapper(lien)}">${lien === APP_URL ? 'Ouvrir le planning des astreintes' : 'Déclarer ma disponibilité'}</a></p>` +
     `<p style="color:#777;font-size:12px">Message automatique — Commune de Pasly.</p>`;
   const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
@@ -64,7 +69,7 @@ async function envoyer(email: string, nom: string, sujet: string, texte: string,
       to: [{ email, name: nom }],
       subject: sujet,
       htmlContent: html,
-      textContent: `Bonjour ${nom},\n\n${texte}\n${liste.map(l => `- ${l}\n`).join('')}\n${APP_URL}`
+      textContent: `Bonjour ${nom},\n\n${texte}\n${liste.map(l => `- ${l}\n`).join('')}\n${lien}`
     })
   });
   if (!res.ok) throw new Error(`Brevo ${res.status} : ${await res.text()}`);
@@ -99,7 +104,7 @@ async function estCleServeur(jwt: string): Promise<boolean> {
   } catch { return false; }
 }
 
-type Message = { email: string; nom: string; sujet: string; texte: string; liste?: string[] };
+type Message = { email: string; nom: string; sujet: string; texte: string; liste?: string[]; lien?: string };
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
@@ -172,11 +177,11 @@ Deno.serve(async (req) => {
       relance.set(a.id, aFaire);
       if (aFaire.length === 1) {
         const s = aFaire[0];
-        messages.push({ email: a.email, nom: a.nom, sujet: 'Rappel — Déclarez votre disponibilité',
+        messages.push({ email: a.email, nom: a.nom, sujet: 'Rappel — Déclarez votre disponibilité', lien: lienDispos(s.id),
           texte: `Merci de déclarer votre disponibilité pour la semaine du ${dateLongue(s.date_debut)} au ${dateLongue(s.date_fin)}, avant le ${dateLongue(s.date_limite_dispo)}.` });
       } else {
         // Un seul email, toutes les semaines restant à déclarer.
-        messages.push({ email: a.email, nom: a.nom, sujet: 'Rappel — Déclarez vos disponibilités',
+        messages.push({ email: a.email, nom: a.nom, sujet: 'Rappel — Déclarez vos disponibilités', lien: lienDispos(aFaire[0].id),
           texte: `Merci de déclarer votre disponibilité pour les ${aFaire.length} semaines suivantes :`,
           liste: aFaire.map(s => `du ${dateLongue(s.date_debut)} au ${dateLongue(s.date_fin)} — à déclarer avant le ${dateLongue(s.date_limite_dispo)}`) });
       }
@@ -241,7 +246,7 @@ Deno.serve(async (req) => {
 
   let envoyes = 0; const echecs: string[] = [];
   for (const m of messages) {
-    try { await envoyer(m.email, m.nom, m.sujet, m.texte, m.liste); envoyes++; }
+    try { await envoyer(m.email, m.nom, m.sujet, m.texte, m.liste, m.lien); envoyes++; }
     catch (e) { echecs.push(`${m.nom} : ${e}`); console.error(e); }
   }
   return reponse({ envoyes, echecs: echecs.length });
