@@ -13,6 +13,9 @@
 // envoyer un message libre à une adresse quelconque. L'appelant doit être
 // connecté, actif, et avoir le droit correspondant à l'action.
 //
+// Garde-fou : au plus 5 envois par heure pour une même semaine ou un même
+// événement (un bouton sollicité en boucle ne peut pas inonder les boîtes).
+//
 // Option test : { ..., test: true } (service_role uniquement) renvoie ce qui
 // serait envoyé sans rien envoyer.
 //
@@ -107,7 +110,7 @@ Deno.serve(async (req) => {
     const { data: u, error } = await sb.auth.getUser(jwt);
     if (error || !u?.user?.email) return reponse({ erreur: 'Connexion requise.' }, 401);
     const { data: a } = await sb.from('agents').select('id, role, actif, peut_gerer_evenements')
-      .ilike('email', u.user.email).maybeSingle();
+      .eq('email', u.user.email.toLowerCase()).maybeSingle();   // adresses toujours en minuscules en base
     if (!a || !a.actif) return reponse({ erreur: 'Compte non autorisé.' }, 403);
     appelant = a;
   }
@@ -169,6 +172,17 @@ Deno.serve(async (req) => {
   }
 
   if (test) return reponse({ test: true, envoyes: 0, prevus: messages.map(m => ({ a: m.nom, sujet: m.sujet })) });
+
+  // Garde-fou : au plus 5 envois par heure pour une même semaine ou un même événement.
+  if (messages.length) {
+    const cible = corps.action === 'evenement' ? corps.evenement_id : corps.semaine_id;
+    const prefixe = `envoi|${corps.action}|${cible}|`;
+    const ilYa1h = new Date(Date.now() - 3600000).toISOString();
+    const { count } = await sb.from('rappels_envoyes').select('cle', { count: 'exact', head: true })
+      .like('cle', prefixe + '%').gte('envoye_le', ilYa1h);
+    if ((count ?? 0) >= 5) return reponse({ erreur: 'Trop d\'envois en une heure pour cet élément : réessayez plus tard.' }, 429);
+    await sb.from('rappels_envoyes').insert({ cle: prefixe + Date.now() });
+  }
 
   // Relance : notification (cloche + alerte téléphone), sauf si la personne
   // en a déjà reçu une non lue il y a moins de 15 minutes.

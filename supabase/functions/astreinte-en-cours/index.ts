@@ -6,9 +6,9 @@
 //
 //   GET .../functions/v1/astreinte-en-cours?t=<code secret>
 //
-// Le code secret (table acces_externes, nom « carnet_astreinte ») n'est connu que
-// du serveur de la mairie, qui ne le donne qu'aux comptes administrateur ou
-// contributeur des téléphones d'astreinte. Déployée sans vérification JWT : le
+// Le code secret n'est connu que du serveur de la mairie, qui ne le donne qu'aux
+// comptes administrateur ou contributeur des téléphones d'astreinte. Ce projet-ci
+// n'en conserve que l'empreinte SHA-256 (table acces_externes, nom « carnet_astreinte »). Déployée sans vérification JWT : le
 // carnet est connecté à un autre projet Supabase ; c'est le code qui protège l'accès.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -27,13 +27,19 @@ function egal(a: string, b: string): boolean {               // comparaison à d
   return r === 0;
 }
 
+async function sha256Hex(texte: string): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(texte)));
+  return Array.from(d).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'GET') return json({ erreur: 'Méthode non autorisée.' }, 405);
   const t = new URL(req.url).searchParams.get('t') ?? '';
   if (!/^[0-9a-f]{48}$/.test(t)) return json({ erreur: 'Accès refusé.' }, 403);
   const { data: acces } = await sb.from('acces_externes').select('jeton').eq('nom', 'carnet_astreinte').maybeSingle();
-  if (!acces || !egal(acces.jeton, t)) return json({ erreur: 'Accès refusé.' }, 403);
+  // La base contient l'empreinte du code (ou, avant la migration du 16/11/2026, le code lui-même).
+  if (!acces || !(egal(acces.jeton, await sha256Hex(t)) || egal(acces.jeton, t))) return json({ erreur: 'Accès refusé.' }, 403);
 
   const jour = aujourdhuiParis();
   const { data: semaines, error } = await sb.from('semaines').select('id, date_debut, date_fin, statut')

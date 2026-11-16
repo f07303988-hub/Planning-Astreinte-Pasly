@@ -11,7 +11,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { genererClesVapid, envoyerPush } from './webpush.js';
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-const SUJET = 'mailto:lieveauxfrancois@gmail.com'; // contact demandé par les services d'alerte
+// Contact demandé par les services d'alerte : l'adresse de l'expéditeur vérifié
+// (aucune adresse personnelle dans le code, qui est public).
+const SUJET = 'mailto:' + (Deno.env.get('BREVO_SENDER_EMAIL') || 'mairie@pasly.fr');
 
 const json = (corps: unknown, status = 200) =>
   new Response(JSON.stringify(corps), { status, headers: { 'Content-Type': 'application/json; charset=utf-8' } });

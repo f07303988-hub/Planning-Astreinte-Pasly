@@ -11,10 +11,12 @@
 //     interceptée, elle exige le réseau.
 // Les données gardées sont effacées à la déconnexion (message « vider-donnees »).
 
-const VERSION = '2026-11-16a';
+const VERSION = '2026-11-16b';
 const CACHE_APPLI = 'appli-' + VERSION;
 const CACHE_DONNEES = 'donnees';
-const FICHIERS_APPLI = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
+const FICHIERS_APPLI = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
+  'polices/fraunces-latin-opsz-normal.woff2', 'polices/ibm-plex-sans-latin-400-normal.woff2',
+  'polices/ibm-plex-sans-latin-500-normal.woff2', 'polices/ibm-plex-sans-latin-600-normal.woff2'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE_APPLI).then(c => c.addAll(FICHIERS_APPLI)).then(() => self.skipWaiting()));
@@ -104,8 +106,8 @@ self.addEventListener('fetch', (e) => {
   // Connexion, fonctions, stockage Supabase : jamais mis en cache
   if (url.hostname.endsWith('.supabase.co')) return;
 
-  // Bibliothèques et polices externes
-  if (url.hostname === 'cdn.jsdelivr.net' || url.hostname.endsWith('fonts.googleapis.com') || url.hostname.endsWith('fonts.gstatic.com')) {
+  // Bibliothèque externe (les polices sont désormais servies par l'appli elle-même)
+  if (url.hostname === 'cdn.jsdelivr.net') {
     e.respondWith(copieLocaleDabord(req));
     return;
   }

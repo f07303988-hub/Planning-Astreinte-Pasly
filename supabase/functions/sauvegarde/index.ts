@@ -2,7 +2,11 @@
 //
 // Exporte toutes les données de l'appli :
 //   - un fichier Excel lisible (un onglet par table + un onglet « Lisez-moi ») ;
-//   - un fichier JSON exact, qui permet une restauration fidèle.
+//   - un fichier JSON exact, qui permet une restauration fidèle ;
+//   - la structure de la base (script SQL produit par la fonction
+//     exporter_structure) : tables, règles de sécurité, fonctions, tâches
+//     programmées. Elle est incluse dans le JSON (champ « structure_sql ») et
+//     jointe à part dans l'email, pour pouvoir recréer la base sur un projet neuf.
 //
 // Deux usages :
 //   - tâche programmée (clé service_role), le 1er de chaque mois :
@@ -21,7 +25,9 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const BREVO_API_KEY = Deno.env.get('BREVO_API_KEY') ?? '';
 const SENDER_EMAIL = Deno.env.get('BREVO_SENDER_EMAIL') ?? '';
-const DESTINATAIRE = 'lieveauxfrancois@gmail.com';
+// Destinataire : l'adresse de l'expéditeur vérifié, sauf si le secret
+// SAUVEGARDE_DESTINATAIRE en indique une autre (aucune adresse dans le code, qui est public).
+const DESTINATAIRE = Deno.env.get('SAUVEGARDE_DESTINATAIRE') || SENDER_EMAIL;
 
 // Ordre = ordre de restauration (les tables référencées d'abord).
 const TABLES = [
@@ -121,7 +127,7 @@ Deno.serve(async (req) => {
   if (!estServeur) {
     const { data: u, error } = await sb.auth.getUser(jwt);
     if (error || !u?.user?.email) return json({ erreur: 'Connexion requise.' }, 401);
-    const { data: a } = await sb.from('agents').select('role, actif').ilike('email', u.user.email).maybeSingle();
+    const { data: a } = await sb.from('agents').select('role, actif').eq('email', u.user.email.toLowerCase()).maybeSingle();   // adresses toujours en minuscules en base
     if (!a || !a.actif || a.role !== 'admin') return json({ erreur: 'Réservé aux administrateurs.' }, 403);
   }
   const corps = await req.json().catch(() => ({}));
@@ -131,9 +137,17 @@ Deno.serve(async (req) => {
   const jour = maintenant.toLocaleDateString('sv-SE', { timeZone: 'Europe/Paris' });
   let donnees: Record<string, unknown[]>;
   try { donnees = await lireTout(sb); } catch (e) { return json({ erreur: String(e) }, 500); }
+  // Structure de la base : si elle ne peut pas être lue, la sauvegarde des
+  // données part quand même (c'est signalé dans l'email).
+  let structure = '';
+  try {
+    const { data, error } = await sb.rpc('exporter_structure');
+    if (error) throw new Error(error.message);
+    structure = typeof data === 'string' ? data : '';
+  } catch (e) { console.error('Structure non exportée', e); }
 
   const xlsx = classeur(donnees, horodatage);
-  const brut = new TextEncoder().encode(JSON.stringify({ application: 'Pasly RH & Planning', date: maintenant.toISOString(), tables: donnees }, null, 1));
+  const brut = new TextEncoder().encode(JSON.stringify({ application: 'Pasly RH & Planning', date: maintenant.toISOString(), tables: donnees, structure_sql: structure }, null, 1));
   const nomXlsx = `sauvegarde-planning-pasly-${jour}.xlsx`;
   const nomJson = `sauvegarde-planning-pasly-${jour}.json`;
   const resume = TABLES.map(t => `${t} : ${donnees[t].length}`).join(' · ');
@@ -146,7 +160,7 @@ Deno.serve(async (req) => {
 
   // Tâche programmée : envoi par email.
   if (!BREVO_API_KEY || !SENDER_EMAIL) return json({ erreur: 'Envoi d\'emails non configuré.' }, 500);
-  if (corps.test) return json({ test: true, destinataire: DESTINATAIRE, resume, taille_xlsx: xlsx.length, taille_json: brut.length });
+  if (corps.test) return json({ test: true, destinataire: DESTINATAIRE, resume, taille_xlsx: xlsx.length, taille_json: brut.length, taille_structure: structure.length });
   const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: { 'api-key': BREVO_API_KEY, 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -156,11 +170,15 @@ Deno.serve(async (req) => {
       subject: `Sauvegarde mensuelle — Planning Astreinte (${jour})`,
       textContent: `Sauvegarde automatique du ${horodatage}.\n\n${resume}\n\n` +
         `Le fichier Excel est lisible directement ; le fichier « -json.txt » (format JSON) sert à une restauration exacte.\n` +
+        (structure
+          ? `Le fichier « structure-base » (script SQL) permet de recréer la base vide sur un nouveau projet avant d'y recharger les données.\n`
+          : `ATTENTION : la structure de la base n'a pas pu être jointe cette fois-ci.\n`) +
         `Ces fichiers contiennent des données personnelles : conservez-les en lieu sûr.`,
       attachment: [
         { name: nomXlsx, content: enBase64(xlsx) },
         // Brevo refuse l'extension .json : même contenu, en .txt.
-        { name: nomJson.replace(/\.json$/, '-json.txt'), content: enBase64(brut) }
+        { name: nomJson.replace(/\.json$/, '-json.txt'), content: enBase64(brut) },
+        ...(structure ? [{ name: `structure-base-planning-pasly-${jour}-sql.txt`, content: enBase64(new TextEncoder().encode(structure)) }] : [])
       ]
     })
   });
