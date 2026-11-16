@@ -6,7 +6,10 @@
 //   2. à l'agent désigné, un rappel 48 h avant le début de son astreinte,
 //      et au remplaçant d'un jour, la veille de son remplacement ;
 //   3. aux admins, une alerte quand une semaine débute dans 15 jours ou moins
-//      sans être publiée.
+//      sans être publiée ;
+//   4. aux agents éligibles qui n'ont pas encore déclaré leur disponibilité,
+//      un rappel 7 jours puis 2 jours avant la date limite d'une semaine
+//      ouverte — un seul email par personne, même pour plusieurs semaines.
 // Chaque rappel crée aussi une notification dans la cloche de l'appli, ce
 // qui déclenche l'alerte sur le téléphone (une seule fois par personne).
 // Chaque rappel n'est marqué « envoyé » que si l'envoi a réussi : en cas
@@ -47,9 +50,13 @@ function echapper(s: string): string {
 }
 
 // ---------- Envoi Brevo ----------
-async function envoyer(to: { email: string; nom: string }, sujet: string, texte: string): Promise<void> {
+// `liste` : lignes affichées en liste à puces sous le texte.
+// `lien` : adresse ouverte par le lien du message (par défaut, l'accueil de l'appli).
+async function envoyer(to: { email: string; nom: string }, sujet: string, texte: string,
+                       liste: string[] = [], lien: string = APP_URL): Promise<void> {
   const html = `<p>Bonjour ${echapper(to.nom)},</p><p>${echapper(texte)}</p>` +
-    `<p><a href="${APP_URL}">Ouvrir le planning des astreintes</a></p>` +
+    (liste.length ? `<ul>${liste.map(l => `<li>${echapper(l)}</li>`).join('')}</ul>` : '') +
+    `<p><a href="${echapper(lien)}">${lien === APP_URL ? 'Ouvrir le planning des astreintes' : 'Déclarer ma disponibilité'}</a></p>` +
     `<p style="color:#777;font-size:12px">Message automatique — Commune de Pasly.</p>`;
   const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
@@ -59,7 +66,7 @@ async function envoyer(to: { email: string; nom: string }, sujet: string, texte:
       to: [{ email: to.email, name: to.nom }],
       subject: sujet,
       htmlContent: html,
-      textContent: `Bonjour ${to.nom},\n\n${texte}\n\n${APP_URL}`
+      textContent: `Bonjour ${to.nom},\n\n${texte}\n${liste.map(l => `- ${l}\n`).join('')}\n${lien}`
     })
   });
   if (!res.ok) throw new Error(`Brevo ${res.status} : ${await res.text()}`);
@@ -101,8 +108,12 @@ function estAppelServeur(req: Request): Promise<boolean> {
 // `cle` identifie un rappel pour un destinataire précis : une fois envoyé,
 // il n'est plus jamais renvoyé à cette personne. `agentId` + `contexte` :
 // notification (cloche + alerte téléphone) créée en même temps que l'email.
+// `liste` / `lien` : voir envoyer(). `notif` : texte de la notification s'il
+// diffère de celui de l'email. `clesSupp` : autres rappels couverts par le même
+// email (rappel groupé), mémorisés eux aussi une fois l'email parti.
 type Envoi = { type: string; email: string; nom: string; sujet: string; texte: string; cle?: string;
-               agentId?: string; contexte?: Record<string, unknown> };
+               agentId?: string; contexte?: Record<string, unknown>;
+               liste?: string[]; lien?: string; notif?: string; clesSupp?: string[] };
 
 Deno.serve(async (req) => {
   if (!(await estAppelServeur(req))) return new Response('Accès refusé.', { status: 403 });
@@ -115,6 +126,7 @@ Deno.serve(async (req) => {
   const today = aujourdhuiParis();
   const demain = ajouterJours(today, 1);
   const dans2j = ajouterJours(today, 2);
+  const dans7j = ajouterJours(today, 7);
   const dans15j = ajouterJours(today, 15);
 
   const { data: agents, error: errA } = await sb.from('agents').select('id, nom, email, role, actif');
@@ -144,7 +156,7 @@ Deno.serve(async (req) => {
       // même si Brevo échoue), et jamais deux fois pour le même rappel.
       if (e.agentId && e.cle && !dejaRecu.has(e.cle + '|alerte')) {
         const { error: errN } = await sb.from('notifications').insert({
-          agent_id: e.agentId, type: 'rappel', message: '⏰ ' + e.texte, contexte: e.contexte ?? null
+          agent_id: e.agentId, type: 'rappel', message: '⏰ ' + (e.notif ?? e.texte), contexte: e.contexte ?? null
         });
         if (errN) echecs.push(`notification ${e.cle} : ${errN.message}`);
         else {
@@ -152,11 +164,12 @@ Deno.serve(async (req) => {
           await sb.from('rappels_envoyes').upsert({ cle: e.cle + '|alerte' }, { onConflict: 'cle', ignoreDuplicates: true });
         }
       }
-      try { await envoyer({ email: e.email, nom: e.nom }, e.sujet, e.texte); }
+      try { await envoyer({ email: e.email, nom: e.nom }, e.sujet, e.texte, e.liste, e.lien); }
       catch (err) { ok = false; echecs.push(`${e.type} → ${e.email} : ${err}`); continue; }
       if (e.cle) {
-        dejaRecu.add(e.cle);
-        const { error } = await sb.from('rappels_envoyes').upsert({ cle: e.cle }, { onConflict: 'cle', ignoreDuplicates: true });
+        const cles = [e.cle, ...(e.clesSupp ?? [])];
+        cles.forEach(c => dejaRecu.add(c));
+        const { error } = await sb.from('rappels_envoyes').upsert(cles.map(c => ({ cle: c })), { onConflict: 'cle', ignoreDuplicates: true });
         if (error) echecs.push(`mémorisation ${e.cle} : ${error.message}`);
       }
     }
@@ -239,6 +252,48 @@ Deno.serve(async (req) => {
       texte: `La semaine du ${dateLongue(s.date_debut)} au ${dateLongue(s.date_fin)} n'est toujours pas publiée alors qu'elle approche.`
     }));
     if (await traiter(lot) && !test) await sb.from('semaines').update({ rappel_non_prise_envoye: true }).eq('id', s.id);
+  }
+
+  // 4. Disponibilités non déclarées à l'approche de la date limite.
+  // Deux rappels par semaine ouverte : « J-7 » (de 7 à 3 jours avant la date
+  // limite) et « J-2 » (de 2 jours avant jusqu'au jour même). Chacun ne part
+  // qu'une fois par personne et par semaine ; les plages (plutôt qu'un jour
+  // précis) rattrapent un matin où l'envoi aurait échoué. Une semaine créée
+  // la veille ou le jour même est ignorée : ses agents viennent d'être prévenus.
+  const { data: ouvertes } = await sb.from('semaines').select('*')
+    .eq('statut', 'ouverte').gte('date_limite_dispo', today).lte('date_limite_dispo', dans7j).order('date_debut');
+  const hier = ajouterJours(today, -1);
+  const aRappeler = (ouvertes ?? []).filter(s =>
+    new Date(s.created_at).toLocaleDateString('sv-SE', { timeZone: 'Europe/Paris' }) < hier);
+  if (aRappeler.length) {
+    const [{ data: eligibles }, { data: dispos }] = await Promise.all([
+      sb.from('agents').select('id, nom, email, role, actif, eligible_astreinte, categorie'),
+      sb.from('disponibilites').select('semaine_id, agent_id').in('semaine_id', aRappeler.map(s => s.id))
+    ]);
+    const aRepondu = new Set((dispos ?? []).map(d => d.semaine_id + '|' + d.agent_id));
+    const lot: Envoi[] = [];
+    for (const a of eligibles ?? []) {
+      if (!a.actif || !a.email || a.role === 'lecteur' || a.eligible_astreinte === false || a.categorie === 'communal') continue;
+      const dus = aRappeler.map(s => ({
+        s, cle: `dispo|${s.id}|${s.date_limite_dispo <= dans2j ? 'J-2' : 'J-7'}|${a.id}`
+      })).filter(x => !aRepondu.has(x.s.id + '|' + a.id) && !dejaRecu.has(x.cle));
+      if (!dus.length) continue;
+      const s = dus[0].s;
+      const un = dus.length === 1;
+      lot.push({
+        type: 'disponibilite', email: a.email, nom: a.nom,
+        cle: dus[0].cle, clesSupp: dus.slice(1).map(x => x.cle), agentId: a.id,
+        contexte: { tab: 'dispos', semaine_id: s.id },
+        lien: `${APP_URL}?onglet=dispos&semaine=${s.id}`,
+        sujet: un ? 'Rappel — Disponibilité à déclarer' : 'Rappel — Disponibilités à déclarer',
+        texte: un
+          ? `Vous n'avez pas encore déclaré votre disponibilité pour la semaine du ${dateLongue(s.date_debut)} au ${dateLongue(s.date_fin)}. Date limite : ${dateLongue(s.date_limite_dispo)}.`
+          : `Vous n'avez pas encore déclaré votre disponibilité pour les ${dus.length} semaines suivantes :`,
+        liste: un ? undefined : dus.map(x => `du ${dateLongue(x.s.date_debut)} au ${dateLongue(x.s.date_fin)} — date limite : ${dateLongue(x.s.date_limite_dispo)}`),
+        notif: un ? undefined : `Disponibilités à déclarer pour ${dus.length} semaines. Première date limite : ${dateLongue(dus.map(x => x.s.date_limite_dispo).sort()[0])}.`
+      });
+    }
+    await traiter(lot);
   }
 
   const resume = { mode: test ? 'test (rien envoyé)' : 'réel', date: today, envois: rapport.length, echecs, detail: rapport.map(r => ({ type: r.type, a: r.nom, sujet: r.sujet })) };
