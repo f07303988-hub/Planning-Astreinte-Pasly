@@ -966,7 +966,11 @@ function formatDateCSV(iso){
 }
 function telechargerCSV(nomFichier, lignes){
   const echapper = (v) => {
-    const s = String(v ?? '');
+    let s = String(v ?? '');
+    // Un texte commençant par = ou @ (ou par + / - sans être un nombre ou un
+    // téléphone) serait exécuté comme une formule par Excel : l'apostrophe
+    // en tête le fait lire comme du simple texte.
+    if (/^[=@\t\r]/.test(s) || (/^[+-]/.test(s) && !/^[+-][\d\s.,()]+$/.test(s))) s = "'" + s;
     return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
   const contenu = '\uFEFF' + lignes.map(ligne => ligne.map(echapper).join(';')).join('\r\n');
@@ -4853,6 +4857,7 @@ async function renderPlanningAgentsCommunaux(view){
           agent_id: agentId, date: iso, type,
           motif: motif || null, commentaire: commentaire || null,
           heure_debut: null, heure_fin: null, pause: null, lieu: null, remplacant_id: null,
+          matin_debut: null, matin_fin: null, apresmidi_debut: null, apresmidi_fin: null,   // sinon les horaires de la journée remplacée restaient affichés
           created_by: state.agent.id, updated_by: state.agent.id
         }));
         const { error } = await sb.from('planning_agents').upsert(lignes, { onConflict: 'agent_id,date' });
