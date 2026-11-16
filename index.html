@@ -735,7 +735,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.11.16a";
+const APP_VERSION = "2026.11.16b";
 
 // Question « Oui / Non » dans une fenêtre de l'application (au lieu de la boîte du navigateur).
 // Renvoie une promesse : true pour Oui ; false pour Non, la touche Échap ou un appui à côté.
@@ -2089,6 +2089,7 @@ async function verifierInactiviteEcoulee(){
   let derniere;
   try { derniere = Number(localStorage.getItem(INACTIVITE_STORAGE_KEY)); } catch(e) { derniere = null; }
   if (derniere && (Date.now() - derniere) >= INACTIVITE_LIMITE_MS) {
+    viderDonneesHorsLigne();   // poste partagé : rien ne doit rester lisible après la déconnexion
     await sb.auth.signOut();
     state.session = null;
     showToast('Déconnecté après 15 minutes d\'inactivité.', 'info');
@@ -2102,6 +2103,7 @@ function demarrerSurveillanceInactivite(){
   clearTimeout(inactiviteTimer);
   inactiviteTimer = setTimeout(async () => {
     if (!state.session || !navigator.onLine || resterConnecte()) return;
+    viderDonneesHorsLigne();   // poste partagé : rien ne doit rester lisible après la déconnexion
     await sb.auth.signOut();
     showToast('Déconnecté après 15 minutes d\'inactivité.', 'info');
   }, INACTIVITE_LIMITE_MS);
