@@ -741,7 +741,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.11.16b";
+const APP_VERSION = "2026.11.16c";
 
 // Question « Oui / Non » dans une fenêtre de l'application (au lieu de la boîte du navigateur).
 // Renvoie une promesse : true pour Oui ; false pour Non, la touche Échap ou un appui à côté.
@@ -1970,18 +1970,30 @@ async function relancerNonRepondants(semaine){
   return { semaine, envoyes: r.envoyes, echecs: r.echecs };
 }
 
+// Relance groupée pour plusieurs semaines : un seul appel au serveur, et
+// chaque agent reçoit UN SEUL email listant les semaines qu'il lui reste à
+// déclarer (plusieurs emails presque identiques envoyés à la même minute
+// finissent dans les indésirables).
+async function relancerSemaines(semaines){
+  if (!semaines.length) return { envoyes: 0, echecs: 0 };
+  const r = await envoyerEmailServeur('relance', { semaine_ids: semaines.map(s => s.id) });
+  if (r.erreur) return { erreur: r.erreur };
+  return { envoyes: r.envoyes, echecs: r.echecs, nbSemaines: semaines.length };
+}
+
 // Agrège les résultats (une ou plusieurs semaines) en un seul message clair.
 function afficherResultatRelance(resultats){
   const enErreur = resultats.find(r => r.erreur);
   if (enErreur) { showToast('Erreur : ' + enErreur.erreur, 'error'); return; }
   const totalEnvoyes = resultats.reduce((s,r) => s + (r.envoyes||0), 0);
   const totalEchecs = resultats.reduce((s,r) => s + (r.echecs||0), 0);
+  const nbSemaines = resultats.reduce((s,r) => s + (r.nbSemaines||1), 0);
   if (totalEnvoyes === 0 && totalEchecs === 0) {
-    showToast('Tous les agents ont déjà répondu' + (resultats.length > 1 ? ' pour toutes les semaines ouvertes.' : '.'), 'success');
+    showToast('Tous les agents ont déjà répondu' + (nbSemaines > 1 ? ' pour toutes les semaines ouvertes.' : '.'), 'success');
   } else if (totalEnvoyes === 0 && totalEchecs > 0) {
     showToast('Aucun email n\'a pu être envoyé (' + totalEchecs + ' ' + accord(totalEchecs, 'échec(s)') + '). Réessayez plus tard.', 'error');
   } else {
-    const suffixe = resultats.length > 1 ? ` (${resultats.length} semaines)` : '';
+    const suffixe = nbSemaines > 1 ? ` (${nbSemaines} semaines)` : '';
     showToast(totalEnvoyes + ' ' + accord(totalEnvoyes, 'rappel(s) envoyé(s)') + (totalEchecs ? ', ' + totalEchecs + ' ' + accord(totalEchecs, 'échec(s)') : '') + suffixe + '.', totalEchecs ? 'error' : 'success');
   }
 }
@@ -3429,13 +3441,10 @@ async function renderSemainesAdmin(view){
         crees++;
         if (creee) creees.push(creee);
       }
-      // Prévient les agents éligibles pour chacune des nouvelles semaines
-      // (réutilise la relance existante, comme pour la création simple).
-      let totalEmails = 0;
-      for (const sem of creees) {
-        const resultat = await relancerNonRepondants(sem);
-        totalEmails += (resultat && resultat.envoyes) || 0;
-      }
+      // Prévient les agents éligibles des nouvelles semaines : un seul
+      // email par personne, qui les liste toutes.
+      const resultat = await relancerSemaines(creees);
+      const totalEmails = (resultat && resultat.envoyes) || 0;
       let resume = crees + ' ' + accord(crees, 'semaine(s) créée(s)');
       if (ignorees > 0) resume += ', ' + ignorees + ' ' + accord(ignorees, 'déjà existante(s) ignorée(s)');
       if (echecs > 0) resume += ', ' + echecs + ' ' + accord(echecs, 'échec(s)');
@@ -3475,11 +3484,7 @@ async function renderSemainesAdmin(view){
   if (btnRelancerTout) btnRelancerTout.addEventListener('click', async (e) => {
     const semainesOuvertes = (semainesToutes||[]).filter(s => s.statut === 'ouverte');
     await withLoading(e.currentTarget, 'Envoi…', async () => {
-      const resultats = [];
-      for (const semaine of semainesOuvertes) {
-        resultats.push(await relancerNonRepondants(semaine));
-      }
-      afficherResultatRelance(resultats);
+      afficherResultatRelance([await relancerSemaines(semainesOuvertes)]);
     });
   });
 
