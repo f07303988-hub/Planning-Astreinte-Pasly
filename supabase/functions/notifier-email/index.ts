@@ -2,7 +2,9 @@
 //
 // Déclenchée par la base (déclencheurs + pg_net), jamais par l'appli :
 //   { notification_id }  → envoie par email une notification d'échange ou de
-//                          remplacement (reçue, acceptée, refusée) à son destinataire ;
+//                          remplacement (reçue, acceptée, refusée) à son destinataire,
+//                          ou l'annonce d'un changement de titulaire décidé par
+//                          l'administrateur (ancien titulaire, remplaçant annulé) ;
 //   { echange_ouvert_id } / { remplacement_ouvert_id }
 //                        → demande « ouverte à tous » : prévient chaque agent
 //                          éligible (sauf le demandeur).
@@ -25,7 +27,10 @@ const SUJETS: Record<string, string> = {
   echange_refuse: 'Échange d\'astreinte refusé',
   remplacement_recu: 'Demande de remplacement d\'astreinte',
   remplacement_accepte: 'Remplacement d\'astreinte accepté',
-  remplacement_refuse: 'Remplacement d\'astreinte refusé'
+  remplacement_refuse: 'Remplacement d\'astreinte refusé',
+  // Changement de titulaire d'une semaine publiée, décidé par l'administrateur
+  astreinte_retiree: 'Vous n\'êtes plus d\'astreinte',
+  remplacement_annule: 'Remplacement d\'astreinte annulé'
 };
 const A_REPONDRE = ['echange_recu', 'remplacement_recu'];
 
