@@ -735,7 +735,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ohyUYzHMz4ARxvVhpFwdsQ_pT9XzfeX";
 // Numéro de version affiché sur l'écran de connexion — format AAAA.MM.JJ
 // (date de la dernière modification du fichier), à mettre à jour à
 // chaque modification, aussi mineure soit-elle.
-const APP_VERSION = "2026.11.11a";
+const APP_VERSION = "2026.11.16a";
 
 // Question « Oui / Non » dans une fenêtre de l'application (au lieu de la boîte du navigateur).
 // Renvoie une promesse : true pour Oui ; false pour Non, la touche Échap ou un appui à côté.
@@ -3043,7 +3043,7 @@ async function renderPlanningAdmin(view){
     <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
       <div>
         <h3 style="margin-bottom:2px;">Générer une proposition</h3>
-        <div class="week-sub">Répartit équitablement les semaines non encore assignées, selon les disponibilités déclarées et en évitant si possible deux semaines consécutives pour la même personne. Cela reste une proposition à vérifier avant publication.</div>
+        <div class="week-sub">Répartit équitablement toutes les semaines non publiées (une proposition déjà faite ou choisie à la main est recalculée), selon les disponibilités déclarées et en évitant si possible deux semaines consécutives pour la même personne. Cela reste une proposition à vérifier avant publication.</div>
       </div>
       <button class="primary" id="btn-generer">Générer une proposition</button>
     </div>
@@ -3068,6 +3068,13 @@ async function renderPlanningAdmin(view){
   if (btnHist) btnHist.addEventListener('click', () => { state.showHistoriqueAdmin = !state.showHistoriqueAdmin; renderView(); });
 
   document.getElementById('btn-generer').addEventListener('click', async (e) => {
+    // La génération recalcule TOUTES les semaines non publiées : on prévient
+    // avant de remplacer une proposition existante ou un choix fait à la main.
+    const dejaProposees = semainesToutes.filter(s => s.statut !== 'publiee' && planByWeek[s.id]).length;
+    if (dejaProposees > 0 && !await confirmer(
+      dejaProposees + ' ' + accord(dejaProposees, 'semaine(s) non publiée(s)') + (dejaProposees > 1 ? ' ont' : ' a') + ' déjà un agent proposé.\n\n' +
+      'La génération va recalculer ' + (dejaProposees > 1 ? 'ces propositions' : 'cette proposition') + ', y compris un choix fait à la main. Les semaines publiées ne changent pas.\n\nContinuer ?'
+    )) return;
     await withLoading(e.currentTarget, 'Génération…', async () => {
       // Calcul ET écriture faits côté serveur, en une seule transaction :
       // impossible d'obtenir un lot partiellement généré en cas de coupure réseau.
@@ -3085,6 +3092,7 @@ async function renderPlanningAdmin(view){
       if (!sel.value) return;
       const { error } = await sb.from('planning').upsert({ semaine_id: sel.dataset.semaine, agent_id: sel.value }, { onConflict:'semaine_id' });
       if (error) { showToast('Erreur : ' + error.message, 'error'); return; }
+      planByWeek[sel.dataset.semaine] = { ...(planByWeek[sel.dataset.semaine] || {}), semaine_id: sel.dataset.semaine, agent_id: sel.value };
       showToast('Affectation mise à jour.', 'success');
     });
   });
@@ -3853,7 +3861,17 @@ async function renderDashboardAdmin(view){
       if (diffJours === 7) anomaliesConsecutives.push({ semaineA: a, semaineB: b, agent: agentById[pa.agent_id] });
     }
   }
-  const totalAnomalies = anomaliesIndispo.length + anomaliesConsecutives.length;
+  // Anomalie 3 : titulaire qui ne peut plus assurer l'astreinte (fiche
+  // désactivée, exemptée ou passée en lecture seule après l'affectation)
+  const anomaliesTitulaire = [];
+  semainesFutures.forEach(s => {
+    const p = planByWeek[s.id];
+    const a = p ? agentById[p.agent_id] : null;
+    if (!p) return;
+    const raison = !a ? 'fiche introuvable' : (!a.actif ? 'compte désactivé' : (a.role === 'lecteur' ? 'compte en lecture seule' : (a.eligible_astreinte === false ? 'exempté(e) des astreintes' : null)));
+    if (raison) anomaliesTitulaire.push({ semaine: s, agent: a, raison });
+  });
+  const totalAnomalies = anomaliesIndispo.length + anomaliesConsecutives.length + anomaliesTitulaire.length;
   const semainesUrgentes = semainesNonPublieesFutures.filter(s => s.date_debut <= seuilProche);
 
   // État global
@@ -3921,6 +3939,12 @@ async function renderDashboardAdmin(view){
   const aTraiterHTML = `<div class="card"><h3>⚠️ À traiter</h3>${aTraiterItems || '<div class="empty">Rien à traiter pour le moment.</div>'}</div>`;
 
   let anomaliesItems = '';
+  anomaliesTitulaire.forEach(a => {
+    anomaliesItems += `<div class="dash-item">
+      <div><strong>🔴 ${escapeHTML(a.agent ? a.agent.nom : 'Agent inconnu')}</strong><div class="week-sub">Affecté ${escapeHTML(weekLabel(a.semaine).toLowerCase())} alors que : ${escapeHTML(a.raison)}. Cette astreinte n'est plus assurée.</div></div>
+      <button class="ghost" data-dash-semaine="${escapeHTML(a.semaine.id)}">Voir</button>
+    </div>`;
+  });
   anomaliesIndispo.forEach(a => {
     anomaliesItems += `<div class="dash-item">
       <div><strong>🔴 ${escapeHTML(a.agent ? a.agent.nom : 'Agent inconnu')}</strong><div class="week-sub">Affecté ${escapeHTML(weekLabel(a.semaine).toLowerCase())} alors qu'il/elle est déclaré(e) indisponible.</div></div>
@@ -4393,6 +4417,25 @@ async function renderAgentsAdmin(view){
           'Continuer ?'
         );
         if (!confirmation) return;
+      }
+
+      // Désactivation, exemption ou passage en lecteur : si cette personne a
+      // encore des astreintes à venir, on le dit avant d'enregistrer.
+      const sortDesAstreintes = original && original.actif && original.role !== 'lecteur' && original.eligible_astreinte !== false
+        && (!actif || role === 'lecteur' || !eligible_astreinte);
+      if (sortDesAstreintes) {
+        const { data: sesAstreintes, error: errAst } = await sb.from('planning')
+          .select('semaines!inner(date_debut, date_fin, statut)')
+          .eq('agent_id', agentId).gte('semaines.date_fin', toISODate(new Date()));
+        if (errAst) { msg.textContent = 'Vérification des astreintes à venir impossible : ' + errAst.message; msg.className = 'msg err'; return; }
+        const aVenir = (sesAstreintes || []).map(l => l.semaines).sort((a, b) => a.date_debut < b.date_debut ? -1 : 1);
+        if (aVenir.length) {
+          const liste = aVenir.map(s => '• ' + weekLabel(s).toLowerCase() + (s.statut === 'publiee' ? '' : ' (proposition non publiée)')).join('\n');
+          if (!await confirmer(
+            nom + ' est encore ' + (aVenir.length > 1 ? 'prévu(e) pour ' + aVenir.length + ' astreintes à venir' : 'prévu(e) pour une astreinte à venir') + ' :\n\n' + liste + '\n\n' +
+            'Ces semaines ne seront pas réaffectées automatiquement et resteront signalées en anomalie au tableau de bord tant qu\'elles n\'auront pas un autre titulaire.\n\nEnregistrer quand même ?'
+          )) return;
+        }
       }
 
       const desactivation = original && original.actif && !actif;
