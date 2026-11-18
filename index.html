@@ -816,6 +816,7 @@ let state = {
   showEvenementsPasses: false,
   highlight: null, // { type: 'semaine'|'echange'|'remplacement'|'agent', id } — mis à la volée par le tableau de bord pour repérer un élément après navigation
   planningVue: 'liste', // 'liste' | 'calendrier'
+  equitePeriode: 'annee', // tableau d'équité : 'annee' | 'precedente' | 'tout'
   calYear: new Date().getFullYear(),
   calMonth: new Date().getMonth() // 0 = janvier
 };
@@ -3302,7 +3303,17 @@ async function renderSemainesAdmin(view){
       </div>
       <div class="msg" id="periode-msg"></div>
     </div>
-    <div class="card"><h3>Équité — nombre d'astreintes publiées par agent</h3><div id="balance"></div></div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
+        <h3 style="margin:0;">Équité — jours d'astreinte par agent</h3>
+        <select id="equite-periode" aria-label="Période du tableau d'équité" style="width:auto;">
+          <option value="annee">Année ${new Date().getFullYear()}</option>
+          <option value="precedente">Année ${new Date().getFullYear() - 1}</option>
+          <option value="tout">Depuis le début</option>
+        </select>
+      </div>
+      <div id="balance"></div>
+    </div>
     <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
       <h3 style="margin:0;">Semaines</h3>
       ${(semainesToutes||[]).some(s => s.statut === 'ouverte') ? `<button class="ghost" id="btn-relancer-tout">Relancer pour toutes les semaines ouvertes</button>` : ''}
@@ -3494,19 +3505,63 @@ async function renderSemainesAdmin(view){
   const agents = agentsTous.filter(a => a.eligible_astreinte !== false && a.role !== 'lecteur');
   // Seules les astreintes publiées comptent (passées et à venir) : une simple
   // proposition non publiée ne doit pas fausser la répartition affichée.
-  const { data: plannings } = await sb.from('planning').select('agent_id, semaines(statut)');
-  const counts = Object.fromEntries(agents.map(a => [a.id, 0]));
-  (plannings||[]).forEach(p => {
-    if (!p.semaines || p.semaines.statut !== 'publiee') return;
-    if (counts[p.agent_id] !== undefined) counts[p.agent_id]++;
+  // Décompte en JOURS : les remplacements d'un jour acceptés sont retirés au
+  // titulaire et crédités au remplaçant.
+  const [{ data: plannings }, { data: remplEquite }] = await Promise.all([
+    sb.from('planning').select('agent_id, semaines(statut, date_debut, date_fin)'),
+    sb.from('remplacements_jour').select('date, agent_demandeur_id, agent_remplacant_id, semaines(statut)').eq('statut', 'acceptee')
+  ]);
+  const selPeriode = document.getElementById('equite-periode');
+  selPeriode.value = state.equitePeriode || 'annee';
+  selPeriode.addEventListener('change', () => {
+    state.equitePeriode = selPeriode.value;
+    afficherEquite(agents, plannings || [], remplEquite || []);
   });
-  const valeurs = Object.values(counts);
+  afficherEquite(agents, plannings || [], remplEquite || []);
+}
+
+// Calcule et affiche le tableau d'équité pour la période choisie
+// (année en cours, année précédente ou depuis le début).
+function afficherEquite(agents, plannings, remplacements){
+  const periode = state.equitePeriode || 'annee';
+  const an = new Date().getFullYear();
+  const borne = periode === 'annee' ? [`${an}-01-01`, `${an}-12-31`]
+    : periode === 'precedente' ? [`${an - 1}-01-01`, `${an - 1}-12-31`]
+    : ['0000-01-01', '9999-12-31'];
+  const dansPeriode = d => d >= borne[0] && d <= borne[1];
+  // Nombre de jours d'une semaine (bornes incluses) compris dans la période.
+  const joursDans = (debut, fin) => {
+    const a = debut > borne[0] ? debut : borne[0];
+    const b = fin < borne[1] ? fin : borne[1];
+    if (a > b) return 0;
+    return Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000) + 1;
+  };
+  const st = Object.fromEntries(agents.map(a => [a.id, { jours: 0, semaines: 0, plus: 0, moins: 0 }]));
+  plannings.forEach(p => {
+    const s = p.semaines;
+    if (!s || s.statut !== 'publiee' || !st[p.agent_id]) return;
+    const j = joursDans(s.date_debut, s.date_fin);
+    if (!j) return;
+    st[p.agent_id].jours += j;
+    st[p.agent_id].semaines++;
+  });
+  remplacements.forEach(r => {
+    if (!r.semaines || r.semaines.statut !== 'publiee' || !dansPeriode(r.date)) return;
+    if (st[r.agent_demandeur_id]) { st[r.agent_demandeur_id].jours--; st[r.agent_demandeur_id].moins++; }
+    if (st[r.agent_remplacant_id]) { st[r.agent_remplacant_id].jours++; st[r.agent_remplacant_id].plus++; }
+  });
+  const valeurs = Object.values(st).map(x => x.jours);
   const ecart = valeurs.length ? Math.max(...valeurs) - Math.min(...valeurs) : 0;
-  const rows = agents.slice().sort((a,b) => counts[a.id]-counts[b.id])
-    .map(a => `<tr><td>${escapeHTML(a.nom)}</td><td>${counts[a.id]}</td></tr>`).join('');
+  const detail = x => [x.plus ? `+${x.plus} rempl.` : '', x.moins ? `−${x.moins} remplacé${x.moins > 1 ? 's' : ''}` : '']
+    .filter(Boolean).join(' · ');
+  const rows = agents.slice().sort((a, b) => st[a.id].jours - st[b.id].jours || a.nom.localeCompare(b.nom))
+    .map(a => {
+      const x = st[a.id];
+      return `<tr><td>${escapeHTML(a.nom)}</td><td><strong>${x.jours}</strong></td><td>${x.semaines}</td><td class="week-sub">${detail(x)}</td></tr>`;
+    }).join('');
   document.getElementById('balance').innerHTML =
-    `<div class="week-sub" style="margin-bottom:8px;">Écart actuel : ${ecart} astreinte${ecart>1?'s':''}</div>` +
-    `<table class="balance"><tr><th>Agent</th><th>Astreintes</th></tr>${rows}</table>`;
+    `<div class="week-sub" style="margin-bottom:8px;">Écart actuel : ${ecart} jour${ecart > 1 ? 's' : ''} · semaines publiées uniquement, remplacements d'un jour inclus</div>` +
+    `<table class="balance"><tr><th>Agent</th><th>Jours</th><th>Semaines</th><th>Remplacements</th></tr>${rows}</table>`;
 }
 
 // =========================================================
